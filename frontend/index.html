@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Cross Search — 動画一覧</title>
+  <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
+  <link rel="stylesheet" href="/ui/styles.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <!-- ── サイトの見出し ────────────────────────── -->
+  <header class="header">
+    <a class="brand" href="/" aria-label="Video Cross Search ホーム"><span class="brand-icon" aria-hidden="true">▶</span> Video Cross Search</a>
+    <span class="prototype">授業制作 / PROTOTYPE</span>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">TWO PLATFORMS, ONE VIEW</p>
+      <h1 id="page-title">サイトを越えて、ひとつの一覧へ。</h1>
+      <p class="description">YouTubeとニコニコ動画を、同じ画面で。</p>
+      <div class="sources"><span class="source youtube">YouTube</span><span class="source niconico">ニコニコ動画</span></div>
+    </section>
+    <!-- ── データの状態と一覧 ─────────────────────── -->
+    <section aria-labelledby="list-title">
+      <div class="list-heading"><h2 id="list-title">動画一覧 <span id="count">—</span></h2><span class="sample-label">固定データ・表示確認用</span></div>
+      <p class="notice">現在はサンプル動画です。実際の動画の再生と検索は、今後追加します。</p>
+      <div id="status" role="status" aria-live="polite">動画を読み込んでいます…</div>
+      <button id="retry" type="button" hidden>もう一度読み込む</button>
+      <div id="videos" class="video-grid" aria-busy="true"></div>
+      <noscript><p>動画一覧の表示にはJavaScriptを有効にしてください。</p></noscript>
+    </section>
+  </main>
+  <footer>YouTube / ニコニコ動画 横断表示プロトタイプ</footer>
+</body>
+</html>

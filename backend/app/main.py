@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 # ── 画面と受け渡すデータ形式 ─────────────────────────────
@@ -30,6 +31,7 @@ class VideoList(BaseModel):
 # ── 固定ファイルの読み込み ───────────────────────────────
 # 【根幹】コマンド実行場所ではなく、このファイルの位置からパスを求める。
 BACKEND_DIR = Path(__file__).resolve().parents[1]
+FRONTEND_DIR = BACKEND_DIR.parent / "frontend"
 
 
 def load_catalog(path: Path) -> VideoList:
@@ -78,6 +80,20 @@ def create_app(data_path: Path | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         """サーバーが起動できているかを確認するための窓口。"""
         return {"status": "ok"}
+
+    # ── 画面の配信 ─────────────────────────────────────
+    # APIと同じサーバーで配信するので、追加の開発サーバーは不要。
+    application.mount("/ui", StaticFiles(directory=FRONTEND_DIR), name="ui")
+
+    @application.get("/", include_in_schema=False)
+    def index() -> FileResponse:
+        """一覧画面のHTMLを返す。動画自体はブラウザからAPIへ別途要求する。"""
+        return FileResponse(FRONTEND_DIR / "index.html")
+
+    @application.get("/favicon.ico", include_in_schema=False)
+    def favicon() -> FileResponse:
+        """ブラウザが自動要求するアイコンにも応答して404を防ぐ。"""
+        return FileResponse(FRONTEND_DIR / "favicon.svg", media_type="image/svg+xml")
 
     return application
 
