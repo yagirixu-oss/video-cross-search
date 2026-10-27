@@ -1,0 +1,88 @@
+{
+  "videos": [
+    {
+      "id": "youtube:sample-1",
+      "platform": "youtube",
+      "title": "【仮データ】YouTube サンプル 1",
+      "thumbnail_url": "/static/youtube-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "niconico:sample-1",
+      "platform": "niconico",
+      "title": "【仮データ】ニコニコ動画 サンプル 1",
+      "thumbnail_url": "/static/niconico-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "youtube:sample-2",
+      "platform": "youtube",
+      "title": "【仮データ】YouTube サンプル 2",
+      "thumbnail_url": "/static/youtube-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "niconico:sample-2",
+      "platform": "niconico",
+      "title": "【仮データ】ニコニコ動画 サンプル 2",
+      "thumbnail_url": "/static/niconico-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "youtube:sample-3",
+      "platform": "youtube",
+      "title": "【仮データ】YouTube サンプル 3",
+      "thumbnail_url": "/static/youtube-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "niconico:sample-3",
+      "platform": "niconico",
+      "title": "【仮データ】ニコニコ動画 サンプル 3",
+      "thumbnail_url": "/static/niconico-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "youtube:sample-4",
+      "platform": "youtube",
+      "title": "【仮データ】YouTube サンプル 4",
+      "thumbnail_url": "/static/youtube-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "niconico:sample-4",
+      "platform": "niconico",
+      "title": "【仮データ】ニコニコ動画 サンプル 4",
+      "thumbnail_url": "/static/niconico-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "youtube:sample-5",
+      "platform": "youtube",
+      "title": "【仮データ】YouTube サンプル 5",
+      "thumbnail_url": "/static/youtube-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "niconico:sample-5",
+      "platform": "niconico",
+      "title": "【仮データ】ニコニコ動画 サンプル 5",
+      "thumbnail_url": "/static/niconico-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "youtube:sample-6",
+      "platform": "youtube",
+      "title": "【仮データ】YouTube サンプル 6",
+      "thumbnail_url": "/static/youtube-placeholder.svg",
+      "video_url": null
+    },
+    {
+      "id": "niconico:sample-6",
+      "platform": "niconico",
+      "title": "【仮データ】ニコニコ動画 サンプル 6",
+      "thumbnail_url": "/static/niconico-placeholder.svg",
+      "video_url": null
+    }
+  ]
+}

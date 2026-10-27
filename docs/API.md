@@ -18,7 +18,7 @@
   ]
 }
 ```
-上記は1本分の例です。実際は12本で、youtube / niconicoの順を6回繰り返します。
+上記は仮データの例です。現在の既定データは実動画12本で、video_urlに元サイトのURLが入ります。youtube / niconicoの順を6回繰り返します。
 
 | 項目 | 型 | 用途 |
 |---|---|---|
@@ -75,3 +75,11 @@ function resolveThumbnail(video) {
 ## 同じサーバーでの画面配信
 GET / はカード画面、/ui/ はフロントのCSS・JavaScript・アイコンを返します。
 frontend/app.jsは相対URL /api/videos を使用するため、追加のCORS設定は不要です。
+
+## 実動画リンクの検証
+video_urlがnullでない場合は、HTTPSの正規URL形式を使用してください。
+- YouTube: https://www.youtube.com/watch?v=動画ID
+- ニコニコ: https://www.nicovideo.jp/watch/動画ID
+
+投稿元・ID・URLが一致しないデータは起動時に拒否します。短縮URLは正規URLへ直して登録してください。
+サムネイルは外部の画像URLを参照します。APIは外部画像や動画ファイルを代理配信しません。

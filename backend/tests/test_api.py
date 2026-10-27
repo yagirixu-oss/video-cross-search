@@ -4,12 +4,12 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import BACKEND_DIR, create_app
+from app.main import BACKEND_DIR, Video, create_app
 
 
 # ── 一覧・画像・API仕様 ───────────────────────────────────
 def test_catalog_and_assets():
-    """12本が交互に並び、仮動画に偽リンクがなく、画像を取得できること。"""
+    """実動画12本が交互に並び、リンクのIDが一致すること。外部通信は行わない。"""
     with TestClient(create_app()) as client:
         response = client.get("/api/videos")
         assert response.status_code == 200
@@ -19,10 +19,12 @@ def test_catalog_and_assets():
         assert len({v["id"] for v in videos}) == 12
         for video in videos:
             assert set(video) == {"id", "platform", "title", "thumbnail_url", "video_url"}
-            assert video["video_url"] is None
-            image = client.get(video["thumbnail_url"])
-            assert image.status_code == 200
-            assert "image/svg+xml" in image.headers["content-type"]
+            assert video["video_url"].startswith("https://www.")
+            assert video["thumbnail_url"].startswith("https://")
+            Video.model_validate(video)
+        # 画面・ローカル代替画像は外部サイトの稼働状態に依存せず確認する。
+        for path in ["/", "/ui/app.js", "/ui/styles.css", "/favicon.ico", "/static/youtube-placeholder.svg"]:
+            assert client.get(path).status_code == 200
         assert client.get("/health").json() == {"status": "ok"}
         assert "/api/videos" in client.get("/openapi.json").json()["paths"]
         assert client.get("/docs").status_code == 200
@@ -58,3 +60,27 @@ def test_bad_data_fails_startup(tmp_path, problem):
     with pytest.raises((ValueError, FileNotFoundError)):
         with TestClient(create_app(path)):
             pass
+
+
+# ── 実動画リンクの取り違え防止 ──────────────────────────
+@pytest.mark.parametrize("changes", [
+    {"video_url": "https://example.com/watch?v=aqz-KE-bpKQ"},
+    {"platform": "niconico"},
+    {"id": "youtube:wrong-id"},
+    {"video_url": "http://www.youtube.com/watch?v=aqz-KE-bpKQ"},
+    {"video_url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ&v=another"},
+])
+def test_mismatched_video_link_is_rejected(changes):
+    """リンク先・投稿元・IDが不一致なら、誤ったカードを表示する前に拒否する。"""
+    video = json.loads((BACKEND_DIR / "data/videos.json").read_text(encoding="utf-8"))["videos"][0]
+    video.update(changes)
+    with pytest.raises(ValueError):
+        Video.model_validate(video)
+
+
+def test_placeholder_catalog_still_works():
+    """ネットワークが使えないときの表示確認用データも引き続き使えること。"""
+    with TestClient(create_app(BACKEND_DIR / "data/videos.sample.json")) as client:
+        videos = client.get("/api/videos").json()["videos"]
+        assert len(videos) == 12
+        assert all(v["video_url"] is None for v in videos)
