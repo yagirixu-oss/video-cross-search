@@ -1,0 +1,15 @@
+# Pythonの生成物
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+# 秘密情報はGitHubに送らない
+.env
+.env.*
+!.env.example
+# エディターとフロントの生成物
+.idea/
+.vscode/
+node_modules/
+dist/
