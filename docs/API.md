@@ -1,4 +1,4 @@
-# 動画一覧API v0.1
+# 動画一覧・検索API v0.2
 
 ## リクエスト
 `GET http://127.0.0.1:8000/api/videos`
@@ -69,7 +69,7 @@ function resolveThumbnail(video) {
 - 存在しないパスは404、POSTなど未対応メソッドは405。
 - 固定データに不備がある場合は起動時エラー。画面には通信失敗として扱ってもらう。
 - /healthは200で {"status":"ok"} を返す。
-- 検索・ページ送り・外部サービス連携はまだ未実装。
+- ページ送りは未実装。外部検索は以下の /api/search を使用。
 - APIキーや秘密情報は返却しない。将来導入時もバックエンドで管理する。
 
 ## 同じサーバーでの画面配信
@@ -83,3 +83,51 @@ video_urlがnullでない場合は、HTTPSの正規URL形式を使用してく�
 
 投稿元・ID・URLが一致しないデータは起動時に拒否します。短縮URLは正規URLへ直して登録してください。
 サムネイルは外部の画像URLを参照します。APIは外部画像や動画ファイルを代理配信しません。
+
+
+## 横断検索
+
+`GET /api/search?q=初音ミク`
+
+qは必須。1〜100文字で、前後の空白を除去します。空白のみ・制御文字は422です。
+動画の形式は固定一覧と同じです。入力語は両サイトへ送信します。
+
+```json
+{
+  "query": "初音ミク",
+  "videos": [],
+  "sources": {
+    "youtube": {"status": "unavailable", "count": 0, "code": "not_configured", "message": "YouTube検索はまだ設定されていません。ニコニコ動画のみ検索しています。", "cached": false},
+    "niconico": {"status": "ok", "count": 0, "code": null, "message": null, "cached": false}
+  },
+  "partial": true
+}
+```
+
+上記はYouTube未設定でニコニコが0件だった場合の例です。
+
+| 項目 | 意味 |
+|---|---|
+| query | 前後の空白を除いた検索語 |
+| videos | 各サイト最大6本、合計最大12本。YouTubeから交互。片方が少ないと残りを続ける |
+| sources | 各サイトの状態。okは成功（0件を含む）、unavailableは未設定、errorは失敗 |
+| count | そのサイトから今回表示する動画数。検索対象全体の総件数ではない |
+| code / message | エラー分類と画面用メッセージ。成功時はnull |
+| cached | サーバー内の60秒キャッシュから返したときtrue |
+| partial | いずれかのサイトがokでないときtrue。両方失敗でもtrue |
+
+HTTP 200は少なくとも片方が成功した場合、502は両方が検索できなかった場合です。
+**画面は502でもJSONを読み、sourcesの理由を表示してください。** 422はFastAPI標準のdetail形式です。
+0件の成功を通信失敗として扱わないでください。
+
+主なcodeはnot_configured、configuration_error、quota_exceeded、timeout、connection_error、
+busy、rate_limited、cooldown、query_rejected、upstream_error、invalid_responseです。
+キーや外部サービスの生エラー本文は返しません。
+
+YouTubeは関連度順の候補25件からライブ・配信予定等を除き最大6件、ニコニコはタイトル・説明・タグを検索して再生数順に最大6件です。
+サイトをまたぐ関連度の比較は行いません。ニコニコは日次スナップショットのため最新投稿がすぐ反映されない場合があります。
+外部APIの制限や動画の削除により、常に12本になるとは限りません。
+
+同じ語の成功結果はサーバー内で60秒保持し、全サイト合計最大128検索分に制限します。
+ブラウザ等への応答はCache-Control: no-storeです。ニコニコの503後は5分待機、429後は最低60秒待機します。
+サイトごとの処理は待機を含め10秒で打ち切ります。詳細と公式資料は [SEARCH.md](SEARCH.md) を参照してください。

@@ -1,55 +1,17 @@
-"""固定の動画一覧を返すAPI。起動方法はREADME.mdを参照。"""
+"""固定動画一覧と、外部サイトをまとめた検索API。起動方法はREADME.mdを参照。"""
 import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal
-from urllib.parse import parse_qs, urlsplit
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Query, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
-
-# ── 画面と受け渡すデータ形式 ─────────────────────────────
-class Video(BaseModel):
-    """カード1枚の情報。未選定の仮動画にはリンクを設定しない。"""
-    model_config = ConfigDict(extra="forbid")
-    id: str = Field(min_length=1, description="投稿元と動画IDを組み合わせた識別子")
-    platform: Literal["youtube", "niconico"]
-    title: str = Field(min_length=1)
-    thumbnail_url: str = Field(min_length=1, description="画像URLまたはAPI基準のパス")
-    video_url: HttpUrl | None = Field(description="元動画のURL。仮データはnull")
-
-
-    @model_validator(mode="after")
-    def validate_source_link(self):
-        """投稿元・ID・リンク先を照合し、取り違えた動画データを起動時に検知する。"""
-        # 未選定の仮データは引き続き使える。実動画だけを厳密に照合する。
-        if self.video_url is None:
-            return self
-        url = urlsplit(str(self.video_url))
-        if url.scheme != "https" or url.username or url.password or url.port not in (None, 443):
-            raise ValueError("動画URLには認証情報のないHTTPS URLを指定してください")
-        if self.platform == "youtube":
-            ids = parse_qs(url.query).get("v", [])
-            valid = url.hostname == "www.youtube.com" and url.path == "/watch" and len(ids) == 1
-            video_id = ids[0] if valid else ""
-        else:
-            valid = url.hostname == "www.nicovideo.jp" and url.path.startswith("/watch/")
-            video_id = url.path.removeprefix("/watch/") if valid else ""
-            valid = valid and "/" not in video_id
-        if not valid or not video_id or self.id != f"{self.platform}:{video_id}":
-            raise ValueError("投稿元・動画ID・動画URLが一致していません。仕様書の正規URL形式を使ってください")
-        return self
-
-
-class VideoList(BaseModel):
-    """動画一覧。配列の順番が、そのまま画面の表示順になる。"""
-    model_config = ConfigDict(extra="forbid")
-    videos: list[Video]
-
+import httpx
+from dotenv import dotenv_values
+from .models import Video, VideoList
+from .search import SearchService, SearchResponse
 
 # ── 固定ファイルの読み込み ───────────────────────────────
 # 【根幹】コマンド実行場所ではなく、このファイルの位置からパスを求める。
@@ -67,7 +29,7 @@ def load_catalog(path: Path) -> VideoList:
 
 
 # ── API本体の組み立て ────────────────────────────────────
-def create_app(data_path: Path | None = None) -> FastAPI:
+def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
     """APIを作る。テスト時には別のデータファイルを指定できる。"""
     path = data_path if data_path is not None else BACKEND_DIR / "data" / "videos.json"
 
@@ -75,9 +37,19 @@ def create_app(data_path: Path | None = None) -> FastAPI:
     async def lifespan(application: FastAPI):
         """起動時に一度読み込む。壊れたデータを正常な空一覧として扱わない。"""
         application.state.catalog = load_catalog(path)
-        yield
+        # 環境変数を優先し、なければbackend/.envを読む。値をログに出さない。
+        file_config = dotenv_values(BACKEND_DIR / ".env", encoding="utf-8-sig")
+        youtube_key = os.getenv("YOUTUBE_API_KEY", file_config.get("YOUTUBE_API_KEY") or "").strip()
+        # クライアントは起動中だけ再利用し、終了時に接続を閉じる。
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False,
+            headers={"User-Agent": "video-cross-search-classroom/0.2"},
+            transport=search_transport,
+        ) as client:
+            application.state.search_service = SearchService(client, youtube_key)
+            yield
 
-    application = FastAPI(title="Video Cross Search API", version="0.1.0", lifespan=lifespan)
+    application = FastAPI(title="Video Cross Search API", version="0.2.0", lifespan=lifespan)
 
     # CORSは、別ポートで動く画面からのアクセスをブラウザに許可する設定。
     # ログインは未実装なので、Cookieの送受信は許可しない。
@@ -98,6 +70,22 @@ def create_app(data_path: Path | None = None) -> FastAPI:
     def get_videos(request: Request) -> VideoList:
         """【根幹】画面の一覧取得依頼を受け、検証済みの動画情報をJSONで返す。"""
         return request.app.state.catalog
+
+    # ── 検索の入口 ────────────────────────────────────
+    @application.get("/api/search", response_model=SearchResponse,
+                     responses={502: {"model": SearchResponse, "description": "両サイトで検索できなかった"}})
+    async def search_videos(request: Request, response: Response,
+                            q: str = Query(min_length=1, max_length=100)) -> SearchResponse:
+        """【根幹】入力検証 → 両サイトへ依頼 → 結果の統合。失敗と0件を区別する。"""
+        query = q.strip()
+        if not query or any(ord(char) < 32 or ord(char) == 127 for char in query):
+            raise HTTPException(status_code=422, detail="検索キーワードを1〜100文字で入力してください。")
+        result = await request.app.state.search_service.search(query)
+        # 片方でも検索成功なら200。両方使えない場合だけ502にする。
+        if all(source.status != "ok" for source in result.sources.values()):
+            response.status_code = 502
+        response.headers["Cache-Control"] = "no-store"
+        return result
 
     @application.get("/health")
     def health() -> dict[str, str]:
