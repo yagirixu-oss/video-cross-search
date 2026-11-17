@@ -7,16 +7,16 @@ YouTubeとニコニコ動画を一つの画面で検索し、各サイト最大6
 
 ## 1. 共有する人が行うこと
 
-リポジトリは現在非公開（Private）です。URLを送るだけでは、権限のない人は404になります。
+リポジトリは公開（Public）です。閲覧とZIPのダウンロードに、GitHubへのログインや招待の承諾は不要です。
 
-1. 相手のGitHubユーザー名を確認します。
-2. [リポジトリ](https://github.com/yagirixu-oss/video-cross-search)の Settings を開きます。
-3. Collaborators（共同作業者）の項目から Add people で相手を招待します。表示名はGitHubの画面により異なる場合があります。
-4. 相手に招待を承諾してもらい、この手順書のURLを送ります。
+相手に次の2つのURLを送ってください。
 
-共同作業者への招待は、コードを変更する権限も与える操作です。共同制作する相手を対象にしてください。
-閲覧・試用だけをしてもらう場合は、所有者がGitHubの Code → Download ZIP で取得したソースZIPを渡す方法もあります。
+- [リポジトリ](https://github.com/yagirixu-oss/video-cross-search)
+- [この共有・起動手順書](https://github.com/yagirixu-oss/video-cross-search/blob/main/docs/SHARING.md)
+
+配布用のZIPはリポジトリの Code → Download ZIP から取得できます。
 自分の作業フォルダをそのままZIPにすると、秘密の.envや大きな.venvが混ざるため、配布にはGitHubから取得したZIPを使ってください。
+コードを直接変更する共同作業者の招待は、閲覧・試用とは別の設定です。
 
 この手順は**各自のPCにアプリを用意して動かす方式**です。ブラウザだけで利用できる公開サイトのURLはまだありません。
 `127.0.0.1` は「今使っている自分のPC」を指します。他の人へそのURLを送っても、共有元のPCにはつながりません。
@@ -25,7 +25,6 @@ YouTubeとニコニコ動画を一つの画面で検索し、各サイト最大6
 
 - WindowsのPCとインターネット接続。
 - Python 3.10以上。これまでの動作確認環境は3.10.11で、すべての新しい版を検証したわけではありません。
-- 非公開リポジトリから直接取得する場合は、招待を承諾したGitHubアカウント。
 - YouTube検索も使う場合は、自分で作成したYouTube Data API v3用のAPIキー。
 
 Pythonは[公式配布ページ](https://www.python.org/downloads/windows/)からインストールできます。
@@ -41,7 +40,7 @@ python --version
 
 ## 3. ソースをダウンロードして展開する
 
-1. 招待を承諾したアカウントでGitHubにログインします。
+1. ブラウザを開きます。GitHubへのログインは不要です。
 2. [リポジトリ](https://github.com/yagirixu-oss/video-cross-search)を開き、Code → Download ZIP を選びます。
 3. ZIPを右クリックして「すべて展開」を実行します。ZIPの中から直接実行しないでください。
 4. 展開したフォルダを開き、**README.md・backend・frontendが一緒にある階層**まで移動します。
@@ -148,7 +147,7 @@ YouTubeは関連度順、ニコニコは再生数順です。一方が失敗し�
 
 | 症状 | 確認すること |
 |---|---|
-| GitHubが404 | 非公開なので、招待の承諾とログイン中のアカウントを確認する |
+| GitHubが404 | 上記の正しいリポジトリURLを開き直す。現在は公開されているため、招待は不要 |
 | pythonが認識されない | 手順2を確認する。pyが使えるなら環境作成時だけpyへ置き換える |
 | .venvのpython.exeが見つからない | 手順4を実行したか、現在地がルートかbackendかを確認する |
 | requirements-lock.txtが見つからない | 手順4はREADME.mdのあるルートで実行する |
