@@ -47,3 +47,5 @@ YouTubeはページの取得件数を6件に揃え、取得した候補を途中
 
 - [YouTube search.listのpageTokenとmaxResults](https://developers.google.com/youtube/v3/docs/search/list)
 - [ニコニコの_offset・meta.totalCount](https://site.nicovideo.jp/search-api-docs/snapshot)
+
+並び順もカーソルに紐づきます。続き・再試行に異なるsortを送ると410になり、外部通信しません。

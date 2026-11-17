@@ -64,6 +64,10 @@ footer { border-top: 1px solid var(--line); padding: 24px 4%; color: var(--muted
 .pagination button:disabled { opacity: .55; cursor: wait; }
 
 /* ── 検索対象：キーボードでも選べる標準の選択欄 ──────── */
-#search-target { display: block; max-width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; }
-#search-target:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#target-help { color: var(--muted); font-size: 12px; margin: 8px 0 14px; }
+#search-target, #search-sort { display: block; max-width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; }
+#search-target:focus-visible, #search-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#target-help, #sort-help { color: var(--muted); font-size: 12px; margin: 8px 0 14px; }
+
+/* 長い検索条件は狭い画面で折り返し、横にはみ出さないようにする。 */
+.list-heading > * { min-width: 0; }
+#list-mode { overflow-wrap: anywhere; }

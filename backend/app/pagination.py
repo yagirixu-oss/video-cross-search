@@ -22,19 +22,19 @@ class CursorCodec:
         """署名専用のランダム鍵を生成する。YouTubeのAPIキーとは別物。"""
         self._secret = secrets.token_bytes(32)
 
-    def encode(self, query: str, positions: dict, active: list[str], target: str = "all") -> str | None:
+    def encode(self, query: str, positions: dict, active: list[str], target: str = "all", sort: str = "default") -> str | None:
         """【根幹】検索語・各サイトの位置・今回呼ぶサイトをまとめて署名する。"""
         if not active:
             return None
         payload = json.dumps({
-            "q": query, "positions": positions, "active": active, "target": target,
+            "q": query, "positions": positions, "active": active, "target": target, "sort": sort,
             "expires": int(time.time()) + CURSOR_TTL,
         }, ensure_ascii=True, separators=(",", ":")).encode()
         body = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         signature = hmac.new(self._secret, body.encode(), hashlib.sha256).hexdigest()
         return f"{body}.{signature}"
 
-    def decode(self, cursor: str, query: str, target: str = "all") -> tuple[dict, list[str]]:
+    def decode(self, cursor: str, query: str, target: str = "all", sort: str = "default") -> tuple[dict, list[str]]:
         """署名・期限・検索語・位置の型を確認し、使える続き情報だけを返す。"""
         try:
             body, signature = cursor.split(".")
@@ -43,7 +43,7 @@ class CursorCodec:
                 raise ValueError
             data = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
             positions, active = data["positions"], data["active"]
-            if data["q"] != query or data.get("target") != target or data["expires"] <= time.time():
+            if data["q"] != query or data.get("target") != target or data.get("sort") != sort or data["expires"] <= time.time():
                 raise ValueError
             if set(positions) != set(PLATFORMS) or not active:
                 raise ValueError
@@ -58,4 +58,4 @@ class CursorCodec:
                 raise ValueError
             return positions, active
         except (ValueError, TypeError, KeyError, UnicodeError):
-            raise CursorError("続きの情報が無効、または期限切れです。同じキーワードと検索対象で検索し直してください。") from None
+            raise CursorError("続きの情報が無効、または期限切れです。同じキーワード・検索対象・並び順で検索し直してください。") from None

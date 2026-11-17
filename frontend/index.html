@@ -28,6 +28,13 @@
           <option value="niconico">ニコニコのみ</option>
         </select>
         <p id="target-help">対象を選び「検索」を押すと反映します。選んでいないサイトには検索しません。</p>
+        <label for="search-sort">並び順</label>
+        <select id="search-sort" name="sort" aria-describedby="sort-help">
+          <option value="default">標準</option>
+          <option value="newest">新しい順</option>
+          <option value="views">再生数が多い順</option>
+        </select>
+        <p id="sort-help">標準はYouTubeが関連度順、ニコニコが再生数順です。並び順は「検索」を押すと反映します。</p>
         <label for="query">動画を検索</label>
         <div class="search-controls">
           <input id="query" name="q" type="search" maxlength="100" required
@@ -35,7 +42,7 @@
           <button id="search-submit" type="submit">検索</button>
           <button id="reset" class="secondary" type="button">固定の一覧に戻す</button>
         </div>
-        <p id="search-help">1回につき各サイト最大6本。YouTubeは関連度順、ニコニコは再生数順で取得し、交互に表示します。</p>
+        <p id="search-help">1回につき各サイト最大6本。両方を検索するときは、各サイト内で指定した順に並べて交互に表示します。サイト全体を通した順位ではありません。</p>
         <p id="input-error" role="alert" hidden></p>
       </form>
       <div class="sources"><span class="source youtube">YouTube</span><span class="source niconico">ニコニコ動画</span></div>
