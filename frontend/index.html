@@ -21,6 +21,13 @@
       <p class="description">YouTubeとニコニコ動画を、同じ画面で。</p>
       <!-- 検索はボタンまたはEnterで実行。入力のたびにはAPIを呼ばない。 -->
       <form id="search-form" class="search-form" role="search">
+        <label for="search-target">検索対象</label>
+        <select id="search-target" name="target" aria-describedby="target-help">
+          <option value="all">両方</option>
+          <option value="youtube">YouTubeのみ</option>
+          <option value="niconico">ニコニコのみ</option>
+        </select>
+        <p id="target-help">対象を選び「検索」を押すと反映します。選んでいないサイトには検索しません。</p>
         <label for="query">動画を検索</label>
         <div class="search-controls">
           <input id="query" name="q" type="search" maxlength="100" required

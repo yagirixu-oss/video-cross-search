@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 import httpx
 from dotenv import dotenv_values
 from .models import Video, VideoList
-from .search import SearchService, SearchResponse
+from .search import SearchService, SearchResponse, SearchTarget
 from .pagination import CursorError
 
 # ── 固定ファイルの読み込み ───────────────────────────────
@@ -50,7 +50,7 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
             application.state.search_service = SearchService(client, youtube_key)
             yield
 
-    application = FastAPI(title="Video Cross Search API", version="0.3.0", lifespan=lifespan)
+    application = FastAPI(title="Video Cross Search API", version="0.4.0", lifespan=lifespan)
 
     # CORSは、別ポートで動く画面からのアクセスをブラウザに許可する設定。
     # ログインは未実装なので、Cookieの送受信は許可しない。
@@ -78,13 +78,14 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
                                 410: {"description": "続きの情報が無効または期限切れ"}})
     async def search_videos(request: Request, response: Response,
                             q: str = Query(min_length=1, max_length=100),
-                            cursor: str | None = Query(default=None, min_length=1, max_length=4096)) -> SearchResponse:
+                            cursor: str | None = Query(default=None, min_length=1, max_length=4096),
+                            target: SearchTarget = Query(default="all")) -> SearchResponse:
         """【根幹】入力検証 → 両サイトへ依頼 → 結果の統合。失敗と0件を区別する。"""
         query = q.strip()
         if not query or any(ord(char) < 32 or ord(char) == 127 for char in query):
             raise HTTPException(status_code=422, detail="検索キーワードを1〜100文字で入力してください。")
         try:
-            result = await request.app.state.search_service.search(query, cursor)
+            result = await request.app.state.search_service.search(query, cursor, target)
         except CursorError as exc:
             # 再起動・期限切れ・別キーワードのカーソルでは最初から再検索してもらう。
             raise HTTPException(status_code=410, detail=str(exc)) from None

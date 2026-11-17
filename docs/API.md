@@ -1,4 +1,4 @@
-# 動画一覧・検索API v0.3
+# 動画一覧・検索API v0.4
 
 ## リクエスト
 `GET http://127.0.0.1:8000/api/videos`
@@ -157,3 +157,17 @@ requested=falseのサイトは、画面が保持する以前の状態を上書�
 キャッシュのキーにはサイト・検索語・ページ位置を含みます。同じページの再送では位置を勝手に進めません。
 YouTubeはmaxResults=6とpageToken、ニコニコは_limit=6と_offsetを使用します。
 ニコニコは元のdata件数で_offsetを進め、meta.totalCountで終了を判断します。100000を超えるoffsetは要求しません。
+
+## 検索対象（v0.4で追加）
+
+`GET /api/search?q=検索語&target=youtube`
+
+targetはall（既定・両方）、youtube、niconicoのいずれかです。それ以外は422で外部通信しません。
+レスポンスのtargetにも実行した対象を返します。対象外サイトはstatus=skipped、selected=false、requested=false、count=0です。
+対象外サイトへ外部通信は行わず、キャッシュの動画も返しません。partialの判定からも対象外を除きます。
+対象内で結果が尽きた場合はselected=true、requested=falseなので、対象外と区別できます。
+YouTube未設定でもniconico指定は正常に検索でき、YouTubeの未設定エラーは返しません。
+youtube指定でキーがなければ502とnot_configuredを返し、ニコニコへ代替検索しません。
+
+続き・再試行にも、最初と同じtargetとqを送ってください。カーソルは検索対象にも紐づき、異なるtargetでの使用は410です。
+同じサイト・キーワード・位置のキャッシュは、allと単一サイト検索の間で共有できますが、応答には選択したサイトだけを含めます。
