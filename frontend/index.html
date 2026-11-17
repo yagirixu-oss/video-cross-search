@@ -28,7 +28,7 @@
           <button id="search-submit" type="submit">検索</button>
           <button id="reset" class="secondary" type="button">固定の一覧に戻す</button>
         </div>
-        <p id="search-help">各サイト最大6本。YouTubeは関連度順、ニコニコは再生数順で取得し、交互に表示します。</p>
+        <p id="search-help">1回につき各サイト最大6本。YouTubeは関連度順、ニコニコは再生数順で取得し、交互に表示します。</p>
         <p id="input-error" role="alert" hidden></p>
       </form>
       <div class="sources"><span class="source youtube">YouTube</span><span class="source niconico">ニコニコ動画</span></div>
@@ -40,8 +40,13 @@
       <p id="source-summary" class="notice" hidden></p>
       <div id="warnings" class="warnings" role="status" aria-live="polite" hidden></div>
       <div id="status" role="status" aria-live="polite">動画を読み込んでいます…</div>
-      <button id="retry" type="button" hidden>もう一度読み込む</button>
       <div id="videos" class="video-grid" aria-busy="true"></div>
+      <!-- ── 続きの取得：最初から先読みせず、押されたときだけ通信する ── -->
+      <div class="pagination">
+        <p id="page-status" role="status" aria-live="polite" tabindex="-1"></p>
+        <button id="load-more" type="button" aria-controls="videos" hidden>もっと見る</button>
+        <button id="retry" type="button" hidden>もう一度読み込む</button>
+      </div>
       <noscript><p>動画一覧の表示にはJavaScriptを有効にしてください。</p></noscript>
     </section>
   </main>

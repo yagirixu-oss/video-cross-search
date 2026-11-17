@@ -12,6 +12,7 @@ import httpx
 from dotenv import dotenv_values
 from .models import Video, VideoList
 from .search import SearchService, SearchResponse
+from .pagination import CursorError
 
 # ── 固定ファイルの読み込み ───────────────────────────────
 # 【根幹】コマンド実行場所ではなく、このファイルの位置からパスを求める。
@@ -49,7 +50,7 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
             application.state.search_service = SearchService(client, youtube_key)
             yield
 
-    application = FastAPI(title="Video Cross Search API", version="0.2.0", lifespan=lifespan)
+    application = FastAPI(title="Video Cross Search API", version="0.3.0", lifespan=lifespan)
 
     # CORSは、別ポートで動く画面からのアクセスをブラウザに許可する設定。
     # ログインは未実装なので、Cookieの送受信は許可しない。
@@ -73,16 +74,22 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
 
     # ── 検索の入口 ────────────────────────────────────
     @application.get("/api/search", response_model=SearchResponse,
-                     responses={502: {"model": SearchResponse, "description": "両サイトで検索できなかった"}})
+                     responses={502: {"model": SearchResponse, "description": "要求したサイトで検索できなかった"},
+                                410: {"description": "続きの情報が無効または期限切れ"}})
     async def search_videos(request: Request, response: Response,
-                            q: str = Query(min_length=1, max_length=100)) -> SearchResponse:
+                            q: str = Query(min_length=1, max_length=100),
+                            cursor: str | None = Query(default=None, min_length=1, max_length=4096)) -> SearchResponse:
         """【根幹】入力検証 → 両サイトへ依頼 → 結果の統合。失敗と0件を区別する。"""
         query = q.strip()
         if not query or any(ord(char) < 32 or ord(char) == 127 for char in query):
             raise HTTPException(status_code=422, detail="検索キーワードを1〜100文字で入力してください。")
-        result = await request.app.state.search_service.search(query)
-        # 片方でも検索成功なら200。両方使えない場合だけ502にする。
-        if all(source.status != "ok" for source in result.sources.values()):
+        try:
+            result = await request.app.state.search_service.search(query, cursor)
+        except CursorError as exc:
+            # 再起動・期限切れ・別キーワードのカーソルでは最初から再検索してもらう。
+            raise HTTPException(status_code=410, detail=str(exc)) from None
+        # 今回要求したサイトがすべて失敗した場合は502。対象外のサイトで成功を偽装しない。
+        if not any(source.requested and source.status == "ok" for source in result.sources.values()):
             response.status_code = 502
         response.headers["Cache-Control"] = "no-store"
         return result

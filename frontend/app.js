@@ -77,85 +77,161 @@ const sourceSummary = document.querySelector("#source-summary");
 const listLabel = document.querySelector("#list-label");
 const listMode = document.querySelector("#list-mode");
 const listNotice = document.querySelector("#list-notice");
+const more = document.querySelector("#load-more");
+const pageStatus = document.querySelector("#page-status");
 let activeController = null;
 let requestNumber = 0;
-let currentQuery = null; // nullは固定一覧。空文字の検索とは区別する。
+let currentQuery = null; // nullは固定一覧。入力欄の編集中の文字列とは分ける。
+let nextCursor = null;
+let retryCursor = null;
+let retryRequest = null;
+let sourceStates = {};
+const displayed = new Map(); // 動画IDをキーにして、ページをまたぐ重複を防ぐ。
 
-// サイトごとの成功・失敗を表示する。返されたメッセージもHTMLとして解釈しない。
-function showSources(sources) {
-  if (!sources) return;
+// ── サイト別の累計と案内 ──────────────────────────────
+// 今回取得した件数ではなく、画面に残っている動画の合計を表示する。
+function showSources() {
+  warnings.replaceChildren();
   const labels = { youtube: "YouTube", niconico: "ニコニコ動画" };
   const summaries = [];
   for (const [platform, label] of Object.entries(labels)) {
-    const source = sources[platform];
+    const source = sourceStates[platform];
     if (!source) continue;
-    summaries.push(label + "：" + (source.status === "ok" ? source.count + "本" :
-      source.code === "not_configured" ? "未設定" : "取得できませんでした"));
-    if (source.status !== "ok") {
+    const total = [...displayed.values()].filter(video => video.platform === platform).length;
+    summaries.push(label + "：" + total + "本表示中" +
+      (source.code === "not_configured" ? "（未設定）" : source.status === "error" ? "（取得失敗）" : ""));
+    if (source.status !== "ok" || source.end_reason === "offset_limit") {
       const message = document.createElement("p");
-      message.textContent = label + "：" + (source.message || "検索できませんでした。");
+      message.textContent = label + "：" + (source.end_reason === "offset_limit"
+        ? "APIで取得できる続きの上限に達しました。検索語を絞ってください。"
+        : source.message || "検索できませんでした。");
       warnings.append(message);
     }
   }
   sourceSummary.textContent = summaries.join(" / ");
-  sourceSummary.hidden = false;
+  sourceSummary.hidden = !summaries.length;
   warnings.hidden = !warnings.childElementCount;
 }
 
-// ── 【根幹】依頼 → 成功分を表示 → 失敗分を案内 ──────────
-// 検索をやり直した場合、前のリクエストの結果で新しい画面を上書きしない。
-async function loadVideos(query = null) {
+// すでにDOMから取り除いたボタンへフォーカスが残らないよう、結果の案内へ移す。
+function restorePagingFocus(wasPaging) {
+  if (wasPaging && more.hidden && retry.hidden) pageStatus.focus({ preventScroll: true });
+}
+
+// ── 【根幹】初回は置き換え、続きは既存カードの下へ追加 ──
+// cursorはバックエンドから受け取った文字列をそのまま返す。画面側では分解しない。
+async function loadVideos(query = null, cursor = null, append = false) {
+  // 追加ボタン連打による二重通信を防ぐ。新しい検索は実行中でも切り替えられる。
+  if (append && activeController) return;
+  const wasPaging = document.activeElement === more || document.activeElement === retry;
   currentQuery = query;
   const thisRequest = ++requestNumber;
   if (activeController) activeController.abort();
   const controller = new AbortController();
   activeController = controller;
-  grid.replaceChildren();
+  more.disabled = true;
+  retry.disabled = true;
+  more.textContent = "読み込み中…";
   grid.setAttribute("aria-busy", "true");
-  retry.hidden = true;
-  warnings.replaceChildren();
-  warnings.hidden = true;
-  sourceSummary.hidden = true;
-  count.textContent = "—";
-  listLabel.textContent = query === null ? "動画一覧" : "「" + query + "」の検索結果";
-  listMode.textContent = query === null ? "公開動画・固定の12本" : "各サイト最大6本";
-  listNotice.textContent = query === null
-    ? "動作確認用に選んだ公開動画です。カードを選ぶと元サイトを開きます。"
-    : "各サイトの検索結果を表示しています。カードを選ぶと元サイトを開きます。";
-  status.textContent = query === null ? "動画を読み込んでいます…" : "両サイトを検索しています…";
+  if (!append) {
+    // 検索語を変更したときは、動画・続き位置・サイト別状態をすべてリセットする。
+    grid.replaceChildren();
+    displayed.clear();
+    sourceStates = {};
+    nextCursor = null;
+    retryCursor = null;
+    retryRequest = null;
+    warnings.replaceChildren();
+    warnings.hidden = true;
+    sourceSummary.hidden = true;
+    more.hidden = true;
+    retry.hidden = true;
+    pageStatus.textContent = "";
+    count.textContent = "—";
+    listLabel.textContent = query === null ? "動画一覧" : "「" + query + "」の検索結果";
+    listMode.textContent = query === null ? "公開動画・固定の12本" : "1回につき各サイト最大6本";
+    listNotice.textContent = query === null
+      ? "動作確認用に選んだ公開動画です。カードを選ぶと元サイトを開きます。"
+      : "続きは下の「もっと見る」で取得できます。カードを選ぶと元サイトを開きます。";
+    status.textContent = query === null ? "動画を読み込んでいます…" : "両サイトを検索しています…";
+  } else {
+    pageStatus.textContent = "動画を追加しています…";
+  }
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const url = query === null ? "/api/videos" : "/api/search?" + new URLSearchParams({ q: query });
+    const params = new URLSearchParams({ q: query });
+    if (cursor) params.set("cursor", cursor);
+    const url = query === null ? "/api/videos" : "/api/search?" + params;
     const response = await fetch(url, { signal: controller.signal });
     const data = await response.json();
     if (thisRequest !== requestNumber) return;
-    // 502にもサイト別の説明があるので、HTTPエラー判定より先に表示する。
-    showSources(data.sources);
-    if (!response.ok) throw new Error("HTTP " + response.status);
+    if (response.status === 410) {
+      // 期限切れやサーバー再起動でも、ユーザーが再検索するまでカードは残す。
+      nextCursor = null;
+      more.hidden = true;
+      retryRequest = { query, cursor: null, append: false };
+      retry.textContent = "同じキーワードで検索し直す";
+      retry.hidden = false;
+      pageStatus.textContent = "続きの情報が期限切れ、または無効です。検索し直してください。";
+      return;
+    }
+    if (!response.ok && response.status !== 502) throw new Error("HTTP " + response.status);
     if (!Array.isArray(data.videos)) throw new Error("一覧の形式が不正です");
-    const cards = data.videos.map((video) => {
-      if (!video || typeof video.title !== "string" ||
+    // すべてのカードを検証してからDOMへ追加し、途中の失敗で半端な表示にしない。
+    const additions = new Map();
+    for (const video of data.videos) {
+      if (!video || typeof video.id !== "string" || typeof video.title !== "string" ||
           !["youtube", "niconico"].includes(video.platform)) throw new Error("動画の形式が不正です");
-      return createCard(video);
-    });
+      if (!displayed.has(video.id)) additions.set(video.id, video);
+    }
+    const cards = [...additions.values()].map(createCard);
     grid.append(...cards);
-    count.textContent = cards.length + "本";
-    status.textContent = cards.length ? "" : data.partial
-      ? "検索できたサイトでは、該当する動画がありませんでした。"
+    for (const [id, video] of additions) displayed.set(id, video);
+    for (const [platform, source] of Object.entries(data.sources || {})) {
+      // 失敗サイトだけの再試行では、今回呼んでいないサイトの案内を保持する。
+      if (source.requested || !sourceStates[platform]) sourceStates[platform] = source;
+    }
+    nextCursor = data.next_cursor || null;
+    retryCursor = data.retry_cursor || null;
+    retryRequest = retryCursor ? { query, cursor: retryCursor, append: true } : null;
+    retry.textContent = "取得できなかったサイトを再試行";
+    retry.hidden = !retryRequest;
+    // 全失敗では再試行だけを表示。部分成功なら他方の続きも読み進められる。
+    more.hidden = !nextCursor || response.status === 502;
+    count.textContent = displayed.size + "本";
+    showSources();
+    status.textContent = displayed.size ? "" : response.status === 502
+      ? "検索結果を取得できませんでした。案内を確認して再試行してください。"
+      : nextCursor ? "このページに表示できる動画はありません。続きも確認できます。"
+      : data.partial ? "検索できたサイトでは、該当する動画がありませんでした。"
       : query === null ? "動画がありません。" : "該当する動画がありません。別のキーワードでお試しください。";
-    retry.hidden = !Object.values(data.sources || {}).some(source => source.status === "error");
+    pageStatus.textContent = query === null ? "" : response.status === 502
+      ? "取得に失敗しました。表示済みの動画はそのまま残しています。"
+      : (append ? additions.size + "本追加しました。" : "") +
+        (!nextCursor ? "取得できる検索結果はここまでです。" :
+          retryCursor ? "一部のサイトを取得できませんでした。再試行できます。" :
+            append && !additions.size ? "重複や対象外の動画のみでした。さらに続きを取得できます。" : "");
   } catch (error) {
     if (thisRequest !== requestNumber) return;
-    status.textContent = error.name === "AbortError"
-      ? "応答を待つ時間が長すぎたため中断しました。時間を空けて再試行してください。"
-      : query === null ? "動画を取得できませんでした。サーバーの起動状態を確認してください。"
-      : "検索結果を取得できませんでした。上の案内や通信状態を確認して再試行してください。";
+    // ネットワーク切断では位置を進めず、失敗したリクエストをそのまま再試行する。
+    retryRequest = { query, cursor, append };
+    retry.textContent = append ? "追加の読み込みを再試行" : "もう一度読み込む";
     retry.hidden = false;
+    more.hidden = true;
+    const message = error.name === "AbortError"
+      ? "応答を待つ時間が長すぎたため中断しました。時間を空けて再試行してください。"
+      : "動画を取得できませんでした。サーバーの起動状態や通信を確認して再試行してください。";
+    if (append) pageStatus.textContent = message + " 表示済みの動画は残しています。";
+    else status.textContent = message;
   } finally {
     clearTimeout(timeout);
     if (thisRequest === requestNumber) {
       grid.setAttribute("aria-busy", "false");
       activeController = null;
+      more.disabled = false;
+      retry.disabled = false;
+      more.textContent = "もっと見る";
+      restorePagingFocus(wasPaging);
     }
   }
 }
@@ -183,5 +259,11 @@ document.querySelector("#reset").addEventListener("click", () => {
   loadVideos(null);
 });
 // 入力欄が編集中でも、再試行するのは最後に実行した検索。
-retry.addEventListener("click", () => loadVideos(currentQuery));
+retry.addEventListener("click", () => {
+  if (retryRequest) loadVideos(retryRequest.query, retryRequest.cursor, retryRequest.append);
+});
+// 続きの検索を開始するのは、このボタンを押したときだけ。
+more.addEventListener("click", () => {
+  if (nextCursor) loadVideos(currentQuery, nextCursor, true);
+});
 loadVideos();

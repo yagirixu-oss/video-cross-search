@@ -24,7 +24,7 @@ def youtube_payload(count=6):
 
 def nico_payload(count=6):
     """ニコニコのmeta/data構造を用意する。"""
-    return {"meta": {"status": 200}, "data": [
+    return {"meta": {"status": 200, "totalCount": count}, "data": [
         {"contentId": f"sm{100+i}", "title": f"ニコニコ {i}", "thumbnailUrl": None}
         for i in range(count)
     ]}
