@@ -13,3 +13,8 @@ venv/
 .vscode/
 node_modules/
 dist/
+# 視聴履歴・本人識別キーは公開しない。
+backend/data/private/
+*.sqlite3
+*.sqlite3-*
+*watch-history*.json

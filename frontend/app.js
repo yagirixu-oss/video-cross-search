@@ -65,6 +65,7 @@ function createCard(video) {
   title.textContent = video.title;
   content.append(thumbnail, meta, title, createDetails(video));
   article.append(content);
+  article.append(HistoryUI.actions(video));
   return article;
 }
 
@@ -103,6 +104,8 @@ const searchForm = document.querySelector("#search-form");
 const periodInput = document.querySelector("#search-period");
 const periodLabels = { all: "期間指定なし", week: "最近7日", month: "最近30日", year: "最近365日" };
 let currentPeriod = "all"; // 選択欄の編集と、実行済みの検索条件を分ける。
+let currentPersonalized = false;
+const personalizationNote = document.querySelector("#personalization-note");
 const sortInput = document.querySelector("#search-sort");
 const sortLabels = { default: "標準", newest: "新しい順", views: "再生数が多い順" };
 let currentSort = "default"; // 続きは選択欄の編集中の値ではなく、実行済みの並び順で取得する。
@@ -164,7 +167,7 @@ function restorePagingFocus(wasPaging) {
 
 // ── 【根幹】初回は置き換え、続きは既存カードの下へ追加 ──
 // cursorはバックエンドから受け取った文字列をそのまま返す。画面側では分解しない。
-async function loadVideos(query = null, cursor = null, append = false, target = "all", sort = "default", period = "all") {
+async function loadVideos(query = null, cursor = null, append = false, target = "all", sort = "default", period = "all", personalized = false) {
   // 追加ボタン連打による二重通信を防ぐ。新しい検索は実行中でも切り替えられる。
   if (append && activeController) return;
   const wasPaging = document.activeElement === more || document.activeElement === retry;
@@ -172,6 +175,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   currentTarget = target;
   currentSort = sort;
   currentPeriod = period;
+  currentPersonalized = personalized;
   const thisRequest = ++requestNumber;
   if (activeController) activeController.abort();
   const controller = new AbortController();
@@ -191,6 +195,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
     warnings.replaceChildren();
     warnings.hidden = true;
     sourceSummary.hidden = true;
+    personalizationNote.hidden = true;
     more.hidden = true;
     retry.hidden = true;
     pageStatus.textContent = "";
@@ -206,17 +211,19 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   }
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
-    const params = new URLSearchParams({ q: query, target, sort, period });
+    const params = new URLSearchParams({ q: query, target, sort, period, personalized });
     if (cursor) params.set("cursor", cursor);
     const url = query === null ? "/api/videos" : "/api/search?" + params;
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await fetch(url, {
+      signal: controller.signal, headers: personalized ? HistoryUI.headers(true) : {}
+    });
     const data = await response.json();
     if (thisRequest !== requestNumber) return;
     if (response.status === 410) {
       // 期限切れやサーバー再起動でも、ユーザーが再検索するまでカードは残す。
       nextCursor = null;
       more.hidden = true;
-      retryRequest = { query, cursor: null, append: false, target, sort, period };
+      retryRequest = { query, cursor: null, append: false, target, sort, period, personalized };
       retry.textContent = "同じキーワードで検索し直す";
       retry.hidden = false;
       pageStatus.textContent = "続きの情報が期限切れ、または無効です。検索し直してください。";
@@ -231,7 +238,17 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
           !["youtube", "niconico"].includes(video.platform)) throw new Error("動画の形式が不正です");
       if (!displayed.has(video.id)) additions.set(video.id, video);
     }
-    const cards = [...additions.values()].map(createCard);
+    const cards = [...additions.values()].map(video => {
+      const card = createCard(video);
+      const reason = data.preference_reasons?.[video.id];
+      if (reason) {
+        const note = document.createElement("p");
+        note.className = "preference-reason";
+        note.textContent = reason;
+        card.append(note);
+      }
+      return card;
+    });
     grid.append(...cards);
     for (const [id, video] of additions) displayed.set(id, video);
     for (const [platform, source] of Object.entries(data.sources || {})) {
@@ -240,7 +257,13 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
     }
     nextCursor = data.next_cursor || null;
     retryCursor = data.retry_cursor || null;
-    retryRequest = retryCursor ? { query, cursor: retryCursor, append: true, target, sort, period } : null;
+    retryRequest = retryCursor ? { query, cursor: retryCursor, append: true, target, sort, period, personalized } : null;
+    personalizationNote.textContent = data.personalization_note || "";
+    personalizationNote.hidden = !data.personalization_note;
+    if (query !== null) {
+      listMode.textContent = targetLabels[target] + " / " + sortLabels[sort] + " / " + periodLabels[period] +
+        " / 各サイト最大" + (data.max_per_site || 6) + "本" + (data.personalized ? " / 履歴反映" : "");
+    }
     retry.textContent = "取得できなかったサイトを再試行";
     retry.hidden = !retryRequest;
     // 全失敗では再試行だけを表示。部分成功なら他方の続きも読み進められる。
@@ -261,7 +284,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   } catch (error) {
     if (thisRequest !== requestNumber) return;
     // ネットワーク切断では位置を進めず、失敗したリクエストをそのまま再試行する。
-    retryRequest = { query, cursor, append, target, sort, period };
+    retryRequest = { query, cursor, append, target, sort, period, personalized };
     retry.textContent = append ? "追加の読み込みを再試行" : "もう一度読み込む";
     retry.hidden = false;
     more.hidden = true;
@@ -298,7 +321,7 @@ searchForm.addEventListener("submit", (event) => {
     return;
   }
   inputError.hidden = true;
-  loadVideos(query, null, false, targetInput.value, sortInput.value, periodInput.value);
+  loadVideos(query, null, false, targetInput.value, sortInput.value, periodInput.value, HistoryUI.enabled());
 });
 document.querySelector("#reset").addEventListener("click", () => {
   queryInput.value = "";
@@ -310,10 +333,11 @@ document.querySelector("#reset").addEventListener("click", () => {
 });
 // 入力欄が編集中でも、再試行するのは最後に実行した検索。
 retry.addEventListener("click", () => {
-  if (retryRequest) loadVideos(retryRequest.query, retryRequest.cursor, retryRequest.append, retryRequest.target, retryRequest.sort, retryRequest.period);
+  if (retryRequest) loadVideos(retryRequest.query, retryRequest.cursor, retryRequest.append, retryRequest.target, retryRequest.sort, retryRequest.period, retryRequest.personalized);
 });
 // 続きの検索を開始するのは、このボタンを押したときだけ。
 more.addEventListener("click", () => {
-  if (nextCursor) loadVideos(currentQuery, nextCursor, true, currentTarget, currentSort, currentPeriod);
+  if (nextCursor) loadVideos(currentQuery, nextCursor, true, currentTarget, currentSort, currentPeriod, currentPersonalized);
 });
+HistoryUI.initialize();
 loadVideos();

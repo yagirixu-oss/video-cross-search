@@ -6,6 +6,7 @@
   <title>Video Cross Search — 動画一覧</title>
   <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
   <link rel="stylesheet" href="/ui/styles.css?v=__ASSET_VERSION__">
+  <script src="/ui/history.js?v=__ASSET_VERSION__" defer></script>
   <script src="/ui/app.js?v=__ASSET_VERSION__" defer></script>
 </head>
 <body>
@@ -51,6 +52,10 @@
             <p id="period-help">検索時点からの期間です。「もっと見る」でも同じ期間を使います。</p>
           </div>
         </div>
+        <label class="check-label" for="personalize-search">
+          <input id="personalize-search" type="checkbox"> 履歴を検索に反映
+        </label>
+        <p class="history-help">標準順で利用できます。履歴がある場合は各サイト最大18本を取得し、候補内をこのアプリ独自の順番に調整します。</p>
         <label for="query">動画を検索</label>
         <div class="search-controls">
           <input id="query" name="q" type="search" maxlength="100" required
@@ -58,16 +63,41 @@
           <button id="search-submit" type="submit">検索</button>
           <button id="reset" class="secondary" type="button">固定の一覧に戻す</button>
         </div>
-        <p id="search-help">1回につき各サイト最大6本。両方を検索するときは、各サイト内で指定した順に並べて交互に表示します。サイト全体を通した順位ではありません。</p>
+        <p id="search-help">通常は各サイト最大6本、履歴による補正時は最大18本。両方を検索するときはサイトごとに交互に表示します。サイト全体を通した順位ではありません。</p>
         <p id="input-error" role="alert" hidden></p>
       </form>
       <div class="sources"><span class="source youtube">YouTube</span><span class="source niconico">ニコニコ動画</span></div>
     </section>
+    <!-- ── 個人の履歴：読込・記録・削除を本人が選ぶ ── -->
+    <details id="history-panel" class="history-panel">
+      <summary>視聴履歴を管理 <span id="history-total">0件</span></summary>
+      <p>履歴はこのアプリを動かしているサーバーに保存され、このブラウザ専用のキーで区別します。別の端末との同期はありません。</p>
+      <label class="check-label" for="record-history">
+        <input id="record-history" type="checkbox"> アプリ内のYouTube再生を履歴に記録する
+      </label>
+      <p class="history-help">画面を表示して10秒以上再生すると記録します。ニコニコは視聴後に「見たと記録」を押してください。元サイトを開くだけでは記録しません。</p>
+      <div class="history-import">
+        <label for="history-file">Google Takeoutの視聴履歴JSON（10MB以内）</label>
+        <input id="history-file" type="file" accept=".json,application/json">
+        <button id="history-import" type="button">選んだ履歴を取り込む</button>
+      </div>
+      <p class="history-help"><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeoutを開く ↗</a> → YouTubeとYouTube Music → 履歴を選び、形式をJSONにして書き出します。ZIPを展開し、watch-history.json（視聴履歴）を選びます。</p>
+      <p class="history-help">最新5000件まで保存し、補正には最新1000件まで使用します。アプリ内で記録した履歴は30日で期限切れになります。取込履歴は自動同期されません。</p>
+      <p id="history-message" role="status" aria-live="polite"></p>
+      <button id="history-refresh" type="button">履歴を更新</button>
+      <ol id="history-list" class="history-list" aria-label="最近の視聴履歴"></ol>
+      <div class="history-delete">
+        <label class="check-label" for="history-delete-confirm"><input id="history-delete-confirm" type="checkbox"> このアプリに保存した自分の履歴をすべて削除する</label>
+        <button id="history-delete" type="button" disabled>履歴を削除</button>
+        <p class="history-help">YouTube本体の履歴は削除されません。</p>
+      </div>
+    </details>
     <!-- ── データの状態と一覧 ─────────────────────── -->
     <section aria-labelledby="list-title">
       <div class="list-heading"><h2 id="list-title"><span id="list-label">動画一覧</span> <span id="count">—</span></h2><span class="sample-label" id="list-mode">公開動画・固定の12本</span></div>
       <p class="notice" id="list-notice">動作確認用に選んだ公開動画です。カードを選ぶと元サイトを開きます。</p>
       <p id="source-summary" class="notice" hidden></p>
+      <p id="personalization-note" class="notice" hidden></p>
       <div id="warnings" class="warnings" role="status" aria-live="polite" hidden></div>
       <div id="status" role="status" aria-live="polite">動画を読み込んでいます…</div>
       <div id="videos" class="video-grid" aria-busy="true"></div>
@@ -80,6 +110,13 @@
       <noscript><p>動画一覧の表示にはJavaScriptを有効にしてください。</p></noscript>
     </section>
   </main>
+  <!-- ── 公式プレイヤー：操作部・広告を隠さず表示する ── -->
+  <dialog id="player-dialog" aria-labelledby="player-title">
+    <div class="player-heading"><h2 id="player-title"></h2><button id="player-close" type="button">閉じる</button></div>
+    <div id="player-host"></div>
+    <p id="player-message" role="status" aria-live="polite"></p>
+    <a id="player-original" target="_blank" rel="noopener noreferrer">YouTubeで見る ↗</a>
+  </dialog>
   <footer>YouTube / ニコニコ動画 横断表示プロトタイプ</footer>
 </body>
 </html>

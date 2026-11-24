@@ -15,6 +15,9 @@ from .models import Video, VideoList
 from .search import SearchService, SearchResponse, SearchTarget, SearchSort
 from .pagination import CursorError
 from .filters import SearchPeriod
+from .history import HistoryStore, owner_from
+from .history_api import history_router
+from .personalization import PersonalSearch
 
 # ── 固定ファイルの読み込み ───────────────────────────────
 # 【根幹】コマンド実行場所ではなく、このファイルの位置からパスを求める。
@@ -32,7 +35,8 @@ def load_catalog(path: Path) -> VideoList:
 
 
 # ── API本体の組み立て ────────────────────────────────────
-def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBaseTransport | None = None,
+               history_path: Path | None = None) -> FastAPI:
     """APIを作る。テスト時には別のデータファイルを指定できる。"""
     path = data_path if data_path is not None else BACKEND_DIR / "data" / "videos.json"
 
@@ -46,13 +50,17 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
         # クライアントは起動中だけ再利用し、終了時に接続を閉じる。
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False,
-            headers={"User-Agent": "video-cross-search-classroom/0.6"},
+            headers={"User-Agent": "video-cross-search-classroom/0.7"},
             transport=search_transport,
         ) as client:
             application.state.search_service = SearchService(client, youtube_key)
+            application.state.history = HistoryStore(history_path or Path(os.getenv(
+                "HISTORY_DB_PATH", str(BACKEND_DIR / "data" / "private" / "history.sqlite3"))))
+            application.state.personal_search = PersonalSearch(application.state.search_service, application.state.history)
             yield
 
-    application = FastAPI(title="Video Cross Search API", version="0.6.0", lifespan=lifespan)
+    application = FastAPI(title="Video Cross Search API", version="0.7.0", lifespan=lifespan)
+    application.include_router(history_router())
 
     # ── 更新後の画面と処理が食い違わないようにする ──────
     @application.middleware("http")
@@ -65,7 +73,7 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
                 if key.lower() not in (b"if-none-match", b"if-modified-since")
             ]
         response = await call_next(request)
-        if is_frontend:
+        if is_frontend or request.url.path.startswith(("/api/history", "/api/playback")):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -98,13 +106,18 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
                             cursor: str | None = Query(default=None, min_length=1, max_length=4096),
                             target: SearchTarget = Query(default="all"),
                             sort: SearchSort = Query(default="default"),
-                            period: SearchPeriod = Query(default="all")) -> SearchResponse:
+                            period: SearchPeriod = Query(default="all"),
+                            personalized: bool = Query(default=False)) -> SearchResponse:
         """【根幹】入力検証 → 両サイトへ依頼 → 結果の統合。失敗と0件を区別する。"""
         query = q.strip()
         if not query or any(ord(char) < 32 or ord(char) == 127 for char in query):
             raise HTTPException(status_code=422, detail="検索キーワードを1〜100文字で入力してください。")
         try:
-            result = await request.app.state.search_service.search(query, cursor, target, sort, period)
+            if personalized:
+                result = await request.app.state.personal_search.run(
+                    owner_from(request), query, cursor, target, sort, period)
+            else:
+                result = await request.app.state.search_service.search(query, cursor, target, sort, period)
         except CursorError as exc:
             # 再起動・期限切れ・別キーワードのカーソルでは最初から再検索してもらう。
             raise HTTPException(status_code=410, detail=str(exc)) from None
@@ -126,7 +139,7 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
     def index() -> HTMLResponse:
         """ファイル内容から版番号を作り、旧URLのキャッシュと区別する。"""
         # 更新日時が同じZIPでも、内容が変わればURLが変わる。手動の版上げは不要。
-        assets = (FRONTEND_DIR / "app.js").read_bytes() + (FRONTEND_DIR / "styles.css").read_bytes()
+        assets = b"".join((FRONTEND_DIR / name).read_bytes() for name in ("app.js", "history.js", "styles.css"))
         version = hashlib.sha256(assets).hexdigest()[:16]
         template = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
         return HTMLResponse(template.replace("__ASSET_VERSION__", version))

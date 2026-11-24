@@ -143,24 +143,25 @@ def test_nico_metadata_and_missing_values():
     assert date_or_none('2026-11-20') is None
 
 
-def test_changed_assets_get_new_url_even_with_same_size_and_timestamp(tmp_path, monkeypatch):
+@pytest.mark.parametrize('asset', ['app.js', 'history.js'])
+def test_changed_assets_get_new_url_even_with_same_size_and_timestamp(tmp_path, monkeypatch, asset):
     """今回の不具合の回帰確認。更新日時に頼らず、内容変更で資産URLを更新する。"""
-    for filename in ('index.html', 'app.js', 'styles.css'):
+    for filename in ('index.html', 'app.js', 'history.js', 'styles.css'):
         (tmp_path / filename).write_bytes((main_module.FRONTEND_DIR / filename).read_bytes())
     monkeypatch.setattr(main_module, 'FRONTEND_DIR', tmp_path)
     with TestClient(create_app()) as client:
         first = client.get('/')
         assert first.headers['cache-control'] == 'no-store'
-        url = re.search(r'src="([^"]*app.js[^"]*)"', first.text)[1]
+        url = re.search(r'src="([^"]*' + re.escape(asset) + r'[^"]*)"', first.text)[1]
         script = client.get(url)
         assert script.headers['cache-control'] == 'no-store'
-        path = tmp_path / 'app.js'
+        path = tmp_path / asset
         original_stat = path.stat()
-        path.write_text(path.read_text(encoding='utf-8').replace('use strict', 'use STRICT'), encoding='utf-8')
+        path.write_bytes(path.read_bytes().replace(b'use strict', b'use STRICT'))
         os.utime(path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
         assert path.stat().st_size == original_stat.st_size
         second = client.get('/')
-        next_url = re.search(r'src="([^"]*app.js[^"]*)"', second.text)[1]
+        next_url = re.search(r'src="([^"]*' + re.escape(asset) + r'[^"]*)"', second.text)[1]
         assert url != next_url
         # 古い条件付きリクエストでも、キャッシュを再利用させず実体を返す。
         fresh = client.get(url, headers={'If-None-Match': script.headers['etag']})

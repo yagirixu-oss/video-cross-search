@@ -9,7 +9,7 @@ from itertools import zip_longest
 from typing import Literal
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .models import Video
 from .pagination import CursorCodec, PLATFORMS, NICO_MAX_OFFSET
@@ -61,6 +61,10 @@ class SearchResponse(BaseModel):
     partial: bool
     next_cursor: str | None = None
     retry_cursor: str | None = None
+    personalized: bool = False
+    personalization_note: str | None = None
+    preference_reasons: dict[str, str] = Field(default_factory=dict)
+    max_per_site: int = PER_SITE
 
 
 class ProviderError(Exception):
@@ -79,8 +83,8 @@ def thumbnail(value: object, platform: Platform) -> str:
     return f"/static/{platform}-placeholder.svg"
 
 
-def parse_youtube(payload: dict) -> list[Video]:
-    """動画以外・ライブ中・配信予定を除外し、最大6本を共通形式にする。"""
+def parse_youtube(payload: dict, limit: int = PER_SITE) -> list[Video]:
+    """動画以外・ライブ中・配信予定を除外し、指定した上限まで共通形式にする。"""
     items = payload.get("items")
     if not isinstance(items, list):
         raise ProviderError("invalid_response", "YouTubeから正しい形式の結果を取得できませんでした。")
@@ -116,12 +120,12 @@ def parse_youtube(payload: dict) -> list[Video]:
             author_id=text_or_none(snippet.get("channelId")),
         ))
         seen.add(video_id)
-        if len(videos) == PER_SITE:
+        if len(videos) == limit:
             break
     return videos
 
 
-def parse_niconico(payload: dict) -> list[Video]:
+def parse_niconico(payload: dict, limit: int = PER_SITE) -> list[Video]:
     """投稿動画の検索結果を共通形式にする。生放送APIは使用しない。"""
     meta, items = payload.get("meta"), payload.get("data")
     if not isinstance(meta, dict) or meta.get("status") != 200 or not isinstance(items, list):
@@ -147,7 +151,7 @@ def parse_niconico(payload: dict) -> list[Video]:
             metadata_fetched_at=datetime.now(timezone.utc),
         ))
         seen.add(video_id)
-        if len(videos) == PER_SITE:
+        if len(videos) == limit:
             break
     return videos
 
@@ -166,7 +170,7 @@ class SearchService:
         self._metadata = MetadataService(client, youtube_key)
 
     async def search(self, query: str, cursor: str | None = None, target: SearchTarget = "all",
-                     sort: SearchSort = "default", period: SearchPeriod = "all") -> SearchResponse:
+                     sort: SearchSort = "default", period: SearchPeriod = "all", page_size: int = PER_SITE) -> SearchResponse:
         """【根幹】続き位置から検索し、成功したサイトだけ次の位置へ進める。"""
         selected = list(PLATFORMS) if target == "all" else [target]
         if cursor is not None:
@@ -177,7 +181,7 @@ class SearchService:
             active = selected
             after, before = publication_window(period)
         results = await asyncio.gather(*(
-            self._run(platform, query, positions[platform], platform in active, platform in selected, sort, after, before)
+            self._run(platform, query, positions[platform], platform in active, platform in selected, sort, after, before, page_size)
             for platform in PLATFORMS
         ))
         # 失敗した位置は進めない。再試行で未取得の動画を飛ばさないため。
@@ -192,7 +196,7 @@ class SearchService:
                   for video in pair if video is not None]
         remaining = [p for p in PLATFORMS if positions[p] is not None]
         return SearchResponse(
-            query=query, target=target, sort=sort, videos=videos, sources=sources,
+            query=query, target=target, sort=sort, videos=videos, sources=sources, max_per_site=page_size,
             period=period, published_after=after, published_before=before,
             partial=any(source.selected and source.status != "ok" for source in sources.values()),
             next_cursor=self._cursors.encode(query, positions, remaining, target, sort, period, after, before),
@@ -201,7 +205,7 @@ class SearchService:
         )
 
     async def _run(self, platform: Platform, query: str, position, requested: bool, selected: bool = True,
-                   sort: SearchSort = "default", after=None, before=None):
+                   sort: SearchSort = "default", after=None, before=None, page_size=PER_SITE):
         """終了したサイトは呼ばず、失敗は現在位置を保持したまま返す。"""
         # 【根幹】対象外はキー確認やキャッシュ参照より前に終了し、外部通信しない。
         if not selected:
@@ -213,7 +217,7 @@ class SearchService:
         if not requested or position is None:
             return [], SourceStatus(status="ok", requested=False, has_more=position is not None), position
         try:
-            return await asyncio.wait_for(self._search_locked(platform, query, position, sort, after, before), REQUEST_DEADLINE)
+            return await asyncio.wait_for(self._search_locked(platform, query, position, sort, after, before, page_size), REQUEST_DEADLINE)
         except (asyncio.TimeoutError, httpx.TimeoutException):
             error = ProviderError("timeout", "検索先の応答が時間内に返りませんでした。少し待って再試行してください。")
         except httpx.RequestError:
@@ -223,11 +227,11 @@ class SearchService:
         # 外部の本文や例外文字列は返さない。秘密情報を画面へ流さないため。
         return [], SourceStatus(status="error", code=error.code, message=error.message, has_more=True), position
 
-    async def _search_locked(self, platform: Platform, query: str, position, sort: SearchSort = "default", after=None, before=None):
+    async def _search_locked(self, platform: Platform, query: str, position, sort: SearchSort = "default", after=None, before=None, page_size=PER_SITE):
         """同じサイトへの接続を直列化し、重複検索・混雑時の連続アクセスを防ぐ。"""
         async with self._locks[platform]:
             # 【根幹】並び順の異なるページを同じキャッシュとして返さない。
-            cache_key = (platform, query, position, sort, after, before)
+            cache_key = (platform, query, position, sort, after, before, page_size)
             now = time.monotonic()
             cached = self._cache.get(cache_key)
             if cached and now - cached[0] < CACHE_SECONDS:
@@ -240,12 +244,12 @@ class SearchService:
                 await asyncio.sleep(max(0, self._nico_ready_at - time.monotonic()))
             started = time.monotonic()
             try:
-                payload = await self._fetch(platform, query, position, sort, after, before)
+                payload = await self._fetch(platform, query, position, sort, after, before, page_size)
             finally:
                 if platform == "niconico":
                     elapsed = time.monotonic() - started
                     self._nico_ready_at = time.monotonic() + max(1.0, elapsed)
-            videos = parse_youtube(payload) if platform == "youtube" else parse_niconico(payload)
+            videos = parse_youtube(payload, page_size) if platform == "youtube" else parse_niconico(payload, page_size)
             next_position, end_reason = self._next_position(platform, payload, position)
             metadata_warning = await self._metadata.enrich(platform, videos)
             self._cache[cache_key] = (time.monotonic(), videos, next_position, end_reason, metadata_warning)
@@ -276,13 +280,13 @@ class SearchService:
             return None, "offset_limit"
         return next_offset, None
 
-    async def _fetch(self, platform: Platform, query: str, position, sort: SearchSort = "default", after=None, before=None) -> dict:
+    async def _fetch(self, platform: Platform, query: str, position, sort: SearchSort = "default", after=None, before=None, page_size=PER_SITE) -> dict:
         """外部APIへGETを1回送る。自動リトライで利用枠を消費しない。"""
         if platform == "youtube":
             # APIキーはURLのクエリに載せず、GoogleのAPIキーヘッダーで送る。
-            # 1ページ6件だけを取得し、先のページはボタンが押されるまで取得しない。
+            # 通常6件、履歴を使う場合は候補18件。次ページの先読みはしない。
             response = await self.client.get(YOUTUBE_ENDPOINT, params={
-                "part": "snippet", "type": "video", "q": query, "maxResults": PER_SITE,
+                "part": "snippet", "type": "video", "q": query, "maxResults": page_size,
                 "order": SORT_ORDERS[platform][sort], "relevanceLanguage": "ja", "regionCode": "JP",
                 "safeSearch": "moderate",
                 **({"pageToken": position} if position else {}),
@@ -292,7 +296,7 @@ class SearchService:
             response = await self.client.get(NICONICO_ENDPOINT, params={
                 "q": query, "targets": "title,description,tags",
                 "fields": "contentId,title,thumbnailUrl,startTime,viewCounter,userId,channelId",
-                "_sort": SORT_ORDERS[platform][sort], "_limit": PER_SITE, "_offset": position,
+                "_sort": SORT_ORDERS[platform][sort], "_limit": page_size, "_offset": position,
                 "_context": "video-cross-search-classroom",
                 **({"filters[startTime][gte]": after, "filters[startTime][lte]": before} if after else {}),
             })
