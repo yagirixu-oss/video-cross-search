@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Video Cross Search — 動画一覧</title>
   <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
-  <link rel="stylesheet" href="/ui/styles.css">
-  <script src="/ui/app.js" defer></script>
+  <link rel="stylesheet" href="/ui/styles.css?v=__ASSET_VERSION__">
+  <script src="/ui/app.js?v=__ASSET_VERSION__" defer></script>
 </head>
 <body>
   <!-- ── サイトの見出し ────────────────────────── -->
@@ -21,20 +21,36 @@
       <p class="description">YouTubeとニコニコ動画を、同じ画面で。</p>
       <!-- 検索はボタンまたはEnterで実行。入力のたびにはAPIを呼ばない。 -->
       <form id="search-form" class="search-form" role="search">
-        <label for="search-target">検索対象</label>
-        <select id="search-target" name="target" aria-describedby="target-help">
-          <option value="all">両方</option>
-          <option value="youtube">YouTubeのみ</option>
-          <option value="niconico">ニコニコのみ</option>
-        </select>
-        <p id="target-help">対象を選び「検索」を押すと反映します。選んでいないサイトには検索しません。</p>
-        <label for="search-sort">並び順</label>
-        <select id="search-sort" name="sort" aria-describedby="sort-help">
-          <option value="default">標準</option>
-          <option value="newest">新しい順</option>
-          <option value="views">再生数が多い順</option>
-        </select>
-        <p id="sort-help">標準はYouTubeが関連度順、ニコニコが再生数順です。並び順は「検索」を押すと反映します。</p>
+        <div class="search-filters">
+          <div class="filter-field">
+            <label for="search-target">検索対象</label>
+            <select id="search-target" name="target" aria-describedby="target-help">
+              <option value="all">両方</option>
+              <option value="youtube">YouTubeのみ</option>
+              <option value="niconico">ニコニコのみ</option>
+            </select>
+            <p id="target-help">対象を選び「検索」を押すと反映します。選んでいないサイトには検索しません。</p>
+          </div>
+          <div class="filter-field">
+            <label for="search-sort">並び順</label>
+            <select id="search-sort" name="sort" aria-describedby="sort-help">
+              <option value="default">標準</option>
+              <option value="newest">新しい順</option>
+              <option value="views">再生数が多い順</option>
+            </select>
+            <p id="sort-help">標準はYouTubeが関連度順、ニコニコが再生数順です。並び順は「検索」を押すと反映します。</p>
+          </div>
+          <div class="filter-field">
+            <label for="search-period">投稿期間</label>
+            <select id="search-period" name="period" aria-describedby="period-help">
+              <option value="all">指定なし</option>
+              <option value="week">最近7日</option>
+              <option value="month">最近30日</option>
+              <option value="year">最近365日</option>
+            </select>
+            <p id="period-help">検索時点からの期間です。「もっと見る」でも同じ期間を使います。</p>
+          </div>
+        </div>
         <label for="query">動画を検索</label>
         <div class="search-controls">
           <input id="query" name="q" type="search" maxlength="100" required

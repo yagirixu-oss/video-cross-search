@@ -5,6 +5,8 @@ import hmac
 import json
 import secrets
 import time
+from datetime import datetime
+from .filters import PERIOD_DAYS
 
 PLATFORMS = ("youtube", "niconico")
 CURSOR_TTL = 1800  # 最後に受け取った続き情報は30分間有効。
@@ -22,19 +24,23 @@ class CursorCodec:
         """署名専用のランダム鍵を生成する。YouTubeのAPIキーとは別物。"""
         self._secret = secrets.token_bytes(32)
 
-    def encode(self, query: str, positions: dict, active: list[str], target: str = "all", sort: str = "default") -> str | None:
+    def encode(self, query: str, positions: dict, active: list[str], target: str = "all", sort: str = "default",
+               period: str = "all", published_after: str | None = None,
+               published_before: str | None = None) -> str | None:
         """【根幹】検索語・各サイトの位置・今回呼ぶサイトをまとめて署名する。"""
         if not active:
             return None
         payload = json.dumps({
             "q": query, "positions": positions, "active": active, "target": target, "sort": sort,
+            "period": period, "after": published_after, "before": published_before,
             "expires": int(time.time()) + CURSOR_TTL,
         }, ensure_ascii=True, separators=(",", ":")).encode()
         body = base64.urlsafe_b64encode(payload).decode().rstrip("=")
         signature = hmac.new(self._secret, body.encode(), hashlib.sha256).hexdigest()
         return f"{body}.{signature}"
 
-    def decode(self, cursor: str, query: str, target: str = "all", sort: str = "default") -> tuple[dict, list[str]]:
+    def decode(self, cursor: str, query: str, target: str = "all", sort: str = "default",
+               period: str = "all") -> tuple[dict, list[str], str | None, str | None]:
         """署名・期限・検索語・位置の型を確認し、使える続き情報だけを返す。"""
         try:
             body, signature = cursor.split(".")
@@ -45,6 +51,16 @@ class CursorCodec:
             positions, active = data["positions"], data["active"]
             if data["q"] != query or data.get("target") != target or data.get("sort") != sort or data["expires"] <= time.time():
                 raise ValueError
+            if data.get("period") != period:
+                raise ValueError
+            after, before = data["after"], data["before"]
+            if period == "all":
+                if after is not None or before is not None:
+                    raise ValueError
+            else:
+                start, end = datetime.fromisoformat(after), datetime.fromisoformat(before)
+                if not start.tzinfo or not end.tzinfo or (end - start).total_seconds() != PERIOD_DAYS[period] * 86400:
+                    raise ValueError
             if set(positions) != set(PLATFORMS) or not active:
                 raise ValueError
             if not isinstance(active, list) or any(p not in PLATFORMS for p in active):
@@ -56,6 +72,6 @@ class CursorCodec:
                 raise ValueError
             if any(positions[p] is None for p in active):
                 raise ValueError
-            return positions, active
+            return positions, active, after, before
         except (ValueError, TypeError, KeyError, UnicodeError):
-            raise CursorError("続きの情報が無効、または期限切れです。同じキーワード・検索対象・並び順で検索し直してください。") from None
+            raise CursorError("続きの情報が無効、または期限切れです。同じキーワード・検索対象・並び順・投稿期間で検索し直してください。") from None

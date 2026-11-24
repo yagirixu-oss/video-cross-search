@@ -1,5 +1,6 @@
 """固定一覧と検索結果で共用する動画データ形式。"""
 from typing import Literal
+from datetime import datetime
 from urllib.parse import parse_qs, urlsplit
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -12,6 +13,11 @@ class Video(BaseModel):
     title: str = Field(min_length=1)
     thumbnail_url: str = Field(min_length=1, description="画像URLまたはAPI基準のパス")
     video_url: HttpUrl | None = Field(description="元動画のURL。仮データはnull")
+    published_at: datetime | None = Field(default=None, description="公開日時。未取得はnull")
+    view_count: int | None = Field(default=None, ge=0, description="取得時点の再生数。未取得はnull")
+    author_name: str | None = Field(default=None, description="投稿者またはチャンネルの表示名")
+    author_id: str | None = Field(default=None, description="名前を取得できない場合に使う投稿者ID")
+    metadata_fetched_at: datetime | None = Field(default=None, description="追加情報を取得した日時")
 
 
     @model_validator(mode="after")

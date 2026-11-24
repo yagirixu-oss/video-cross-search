@@ -37,9 +37,30 @@ def isolated_key(monkeypatch):
     monkeypatch.setattr(main_module, "dotenv_values", lambda *a, **k: {})
 
 
-def client_for(handler):
+def metadata_response(request):
+    """検索本体のテストを追加通信と分離するため、補完APIの正常応答を用意する。"""
+    if request.url.path == "/youtube/v3/videos":
+        return httpx.Response(200, json={"items": [
+            {"id": video_id, "snippet": {"channelTitle": "テスト投稿者", "channelId": "UC-test",
+             "publishedAt": "2026-11-20T00:00:00Z"}, "statistics": {"viewCount": "12345"}}
+            for video_id in request.url.params["id"].split(",")
+        ]})
+    video_id = request.url.path.rsplit("/", 1)[1]
+    return httpx.Response(200, text=f'''<nicovideo_thumb_response status="ok"><thumb>
+        <video_id>{video_id}</video_id><user_nickname>テスト投稿者</user_nickname>
+        <first_retrieve>2026-11-20T00:00:00+09:00</first_retrieve>
+        <view_counter>12345</view_counter></thumb></nicovideo_thumb_response>''')
+
+
+def client_for(handler, metadata_handler=None):
     """HTTP通信だけを差し替え、FastAPIの入口からテストできるようにする。"""
-    return TestClient(create_app(search_transport=httpx.MockTransport(handler)))
+    async def route(request):
+        """外部検索と追加情報のリクエストを別々に検証できるよう振り分ける。"""
+        import inspect
+        is_metadata = request.url.path == "/youtube/v3/videos" or request.url.host == "ext.nicovideo.jp"
+        result = (metadata_handler or metadata_response)(request) if is_metadata else handler(request)
+        return await result if inspect.isawaitable(result) else result
+    return TestClient(create_app(search_transport=httpx.MockTransport(route)))
 
 
 # ── APIの入力と統合 ──────────────────────────────────────

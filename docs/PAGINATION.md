@@ -49,3 +49,8 @@ YouTubeはページの取得件数を6件に揃え、取得した候補を途中
 - [ニコニコの_offset・meta.totalCount](https://site.nicovideo.jp/search-api-docs/snapshot)
 
 並び順もカーソルに紐づきます。続き・再試行に異なるsortを送ると410になり、外部通信しません。
+
+
+## v0.6での追加
+
+投稿期間も実行済み条件として保持します。選択だけでは変わらず、「検索」で新しい一覧に置き換わります。続き・再試行には同じperiodを渡してください。詳細は [追加情報と期間の解説](SEARCH-DETAILS.md) を参照してください。

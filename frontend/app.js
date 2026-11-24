@@ -63,13 +63,46 @@ function createCard(video) {
   meta.append(source, state);
   const title = document.createElement("h3");
   title.textContent = video.title;
-  content.append(thumbnail, meta, title);
+  content.append(thumbnail, meta, title, createDetails(video));
   article.append(content);
   return article;
 }
 
+// ── 公開日時・再生数・投稿者を表示 ─────────────────────
+// 不明な再生数を0回と表示しない。日付は日本時間に統一する。
+function createDetails(video) {
+  const details = document.createElement("div");
+  details.className = "video-details";
+  const author = document.createElement("p");
+  author.className = "video-author";
+  author.textContent = "投稿者：" + (video.author_name ||
+    (video.author_id ? "ID " + video.author_id : "未取得"));
+  const stats = document.createElement("p");
+  const published = video.published_at ? new Date(video.published_at) : null;
+  const date = published && !Number.isNaN(published.getTime())
+    ? new Intl.DateTimeFormat("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(published)
+    : "未取得";
+  const views = Number.isSafeInteger(video.view_count) && video.view_count >= 0
+    ? video.view_count.toLocaleString("ja-JP") + "回再生" : "再生数：未取得";
+  stats.textContent = date + " 公開 · " + views;
+  details.append(author, stats);
+  // 固定一覧の数値がリアルタイムの値ではないことも、取得日時で判断できる。
+  const fetched = video.metadata_fetched_at ? new Date(video.metadata_fetched_at) : null;
+  if (fetched && !Number.isNaN(fetched.getTime())) {
+    const asOf = document.createElement("small");
+    asOf.textContent = new Intl.DateTimeFormat("ja-JP", {
+      timeZone: "Asia/Tokyo", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+    }).format(fetched) + " 取得時点";
+    details.append(asOf);
+  }
+  return details;
+}
+
 // ── 検索・固定一覧で共有する状態 ────────────────────────
 const searchForm = document.querySelector("#search-form");
+const periodInput = document.querySelector("#search-period");
+const periodLabels = { all: "期間指定なし", week: "最近7日", month: "最近30日", year: "最近365日" };
+let currentPeriod = "all"; // 選択欄の編集と、実行済みの検索条件を分ける。
 const sortInput = document.querySelector("#search-sort");
 const sortLabels = { default: "標準", newest: "新しい順", views: "再生数が多い順" };
 let currentSort = "default"; // 続きは選択欄の編集中の値ではなく、実行済みの並び順で取得する。
@@ -106,6 +139,11 @@ function showSources() {
     const total = [...displayed.values()].filter(video => video.platform === platform).length;
     summaries.push(label + "：" + total + "本表示中" +
       (source.code === "not_configured" ? "（未設定）" : source.status === "error" ? "（取得失敗）" : ""));
+    if (source.metadata_warning) {
+      const note = document.createElement("p");
+      note.textContent = label + "：" + source.metadata_warning;
+      warnings.append(note);
+    }
     if (source.status !== "ok" || source.end_reason === "offset_limit") {
       const message = document.createElement("p");
       message.textContent = label + "：" + (source.end_reason === "offset_limit"
@@ -126,13 +164,14 @@ function restorePagingFocus(wasPaging) {
 
 // ── 【根幹】初回は置き換え、続きは既存カードの下へ追加 ──
 // cursorはバックエンドから受け取った文字列をそのまま返す。画面側では分解しない。
-async function loadVideos(query = null, cursor = null, append = false, target = "all", sort = "default") {
+async function loadVideos(query = null, cursor = null, append = false, target = "all", sort = "default", period = "all") {
   // 追加ボタン連打による二重通信を防ぐ。新しい検索は実行中でも切り替えられる。
   if (append && activeController) return;
   const wasPaging = document.activeElement === more || document.activeElement === retry;
   currentQuery = query;
   currentTarget = target;
   currentSort = sort;
+  currentPeriod = period;
   const thisRequest = ++requestNumber;
   if (activeController) activeController.abort();
   const controller = new AbortController();
@@ -157,7 +196,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
     pageStatus.textContent = "";
     count.textContent = "—";
     listLabel.textContent = query === null ? "動画一覧" : "「" + query + "」の検索結果";
-    listMode.textContent = query === null ? "公開動画・固定の12本" : targetLabels[target] + " / " + sortLabels[sort] + " / 1回につき各サイト最大6本";
+    listMode.textContent = query === null ? "公開動画・固定の12本" : targetLabels[target] + " / " + sortLabels[sort] + " / " + periodLabels[period] + " / 1回につき各サイト最大6本";
     listNotice.textContent = query === null
       ? "動作確認用に選んだ公開動画です。カードを選ぶと元サイトを開きます。"
       : "続きは下の「もっと見る」で取得できます。カードを選ぶと元サイトを開きます。";
@@ -165,9 +204,9 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   } else {
     pageStatus.textContent = "動画を追加しています…";
   }
-  const timeout = setTimeout(() => controller.abort(), 15000);
+  const timeout = setTimeout(() => controller.abort(), 20000);
   try {
-    const params = new URLSearchParams({ q: query, target, sort });
+    const params = new URLSearchParams({ q: query, target, sort, period });
     if (cursor) params.set("cursor", cursor);
     const url = query === null ? "/api/videos" : "/api/search?" + params;
     const response = await fetch(url, { signal: controller.signal });
@@ -177,7 +216,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
       // 期限切れやサーバー再起動でも、ユーザーが再検索するまでカードは残す。
       nextCursor = null;
       more.hidden = true;
-      retryRequest = { query, cursor: null, append: false, target, sort };
+      retryRequest = { query, cursor: null, append: false, target, sort, period };
       retry.textContent = "同じキーワードで検索し直す";
       retry.hidden = false;
       pageStatus.textContent = "続きの情報が期限切れ、または無効です。検索し直してください。";
@@ -201,7 +240,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
     }
     nextCursor = data.next_cursor || null;
     retryCursor = data.retry_cursor || null;
-    retryRequest = retryCursor ? { query, cursor: retryCursor, append: true, target, sort } : null;
+    retryRequest = retryCursor ? { query, cursor: retryCursor, append: true, target, sort, period } : null;
     retry.textContent = "取得できなかったサイトを再試行";
     retry.hidden = !retryRequest;
     // 全失敗では再試行だけを表示。部分成功なら他方の続きも読み進められる。
@@ -222,7 +261,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   } catch (error) {
     if (thisRequest !== requestNumber) return;
     // ネットワーク切断では位置を進めず、失敗したリクエストをそのまま再試行する。
-    retryRequest = { query, cursor, append, target, sort };
+    retryRequest = { query, cursor, append, target, sort, period };
     retry.textContent = append ? "追加の読み込みを再試行" : "もう一度読み込む";
     retry.hidden = false;
     more.hidden = true;
@@ -259,21 +298,22 @@ searchForm.addEventListener("submit", (event) => {
     return;
   }
   inputError.hidden = true;
-  loadVideos(query, null, false, targetInput.value, sortInput.value);
+  loadVideos(query, null, false, targetInput.value, sortInput.value, periodInput.value);
 });
 document.querySelector("#reset").addEventListener("click", () => {
   queryInput.value = "";
   targetInput.value = "all";
   sortInput.value = "default";
+  periodInput.value = "all";
   inputError.hidden = true;
   loadVideos(null);
 });
 // 入力欄が編集中でも、再試行するのは最後に実行した検索。
 retry.addEventListener("click", () => {
-  if (retryRequest) loadVideos(retryRequest.query, retryRequest.cursor, retryRequest.append, retryRequest.target, retryRequest.sort);
+  if (retryRequest) loadVideos(retryRequest.query, retryRequest.cursor, retryRequest.append, retryRequest.target, retryRequest.sort, retryRequest.period);
 });
 // 続きの検索を開始するのは、このボタンを押したときだけ。
 more.addEventListener("click", () => {
-  if (nextCursor) loadVideos(currentQuery, nextCursor, true, currentTarget, currentSort);
+  if (nextCursor) loadVideos(currentQuery, nextCursor, true, currentTarget, currentSort, currentPeriod);
 });
 loadVideos();

@@ -3,6 +3,7 @@ import asyncio
 import html
 import re
 import time
+from datetime import datetime, timezone
 from collections import OrderedDict
 from itertools import zip_longest
 from typing import Literal
@@ -12,6 +13,8 @@ from pydantic import BaseModel
 
 from .models import Video
 from .pagination import CursorCodec, PLATFORMS, NICO_MAX_OFFSET
+from .filters import SearchPeriod, publication_window
+from .metadata import MetadataService, date_or_none, count_or_none, text_or_none
 
 # ── 外部APIの接続先と、この授業制作での制限 ──────────────
 YOUTUBE_ENDPOINT = "https://www.googleapis.com/youtube/v3/search"
@@ -19,7 +22,7 @@ NICONICO_ENDPOINT = "https://snapshot.search.nicovideo.jp/api/v2/snapshot/video/
 PER_SITE = 6
 CACHE_SECONDS = 60
 CACHE_ENTRIES = 128
-REQUEST_DEADLINE = 10.0  # 接続待ちも含め、サイトごとの処理全体を打ち切る秒数。
+REQUEST_DEADLINE = 16.0  # 検索と最大4秒の追加情報取得、接続待ちを含む上限。
 Platform = Literal["youtube", "niconico"]
 SearchTarget = Literal["all", "youtube", "niconico"]
 SearchSort = Literal["default", "newest", "views"]
@@ -42,6 +45,7 @@ class SourceStatus(BaseModel):
     requested: bool = True  # 再試行で対象外だったサイトはFalse。
     has_more: bool = False
     end_reason: str | None = None
+    metadata_warning: str | None = None
 
 
 class SearchResponse(BaseModel):
@@ -49,6 +53,9 @@ class SearchResponse(BaseModel):
     query: str
     target: SearchTarget = "all"
     sort: SearchSort = "default"
+    period: SearchPeriod = "all"
+    published_after: str | None = None
+    published_before: str | None = None
     videos: list[Video]
     sources: dict[str, SourceStatus]
     partial: bool
@@ -104,6 +111,9 @@ def parse_youtube(payload: dict) -> list[Video]:
             id=f"youtube:{video_id}", platform="youtube", title=html.unescape(title),
             thumbnail_url=thumbnail(image, "youtube"),
             video_url=f"https://www.youtube.com/watch?v={video_id}",
+            published_at=date_or_none(snippet.get("publishedAt")),
+            author_name=text_or_none(snippet.get("channelTitle")),
+            author_id=text_or_none(snippet.get("channelId")),
         ))
         seen.add(video_id)
         if len(videos) == PER_SITE:
@@ -130,6 +140,11 @@ def parse_niconico(payload: dict) -> list[Video]:
             id=f"niconico:{video_id}", platform="niconico", title=title,
             thumbnail_url=thumbnail(item.get("thumbnailUrl"), "niconico"),
             video_url=f"https://www.nicovideo.jp/watch/{video_id}",
+            published_at=date_or_none(item.get("startTime")),
+            view_count=count_or_none(item.get("viewCounter")),
+            author_id=("user:" + str(item["userId"]) if count_or_none(item.get("userId"))
+                       else "channel:" + str(item["channelId"]) if count_or_none(item.get("channelId")) else None),
+            metadata_fetched_at=datetime.now(timezone.utc),
         ))
         seen.add(video_id)
         if len(videos) == PER_SITE:
@@ -148,17 +163,21 @@ class SearchService:
         self._cooldown = {"youtube": 0.0, "niconico": 0.0}
         self._nico_ready_at = 0.0
         self._cursors = CursorCodec()
+        self._metadata = MetadataService(client, youtube_key)
 
-    async def search(self, query: str, cursor: str | None = None, target: SearchTarget = "all", sort: SearchSort = "default") -> SearchResponse:
+    async def search(self, query: str, cursor: str | None = None, target: SearchTarget = "all",
+                     sort: SearchSort = "default", period: SearchPeriod = "all") -> SearchResponse:
         """【根幹】続き位置から検索し、成功したサイトだけ次の位置へ進める。"""
         selected = list(PLATFORMS) if target == "all" else [target]
-        positions, active = (
-            self._cursors.decode(cursor, query, target, sort) if cursor is not None
-            else ({"youtube": "" if "youtube" in selected else None,
-                   "niconico": 0 if "niconico" in selected else None}, selected)
-        )
+        if cursor is not None:
+            positions, active, after, before = self._cursors.decode(cursor, query, target, sort, period)
+        else:
+            positions = {"youtube": "" if "youtube" in selected else None,
+                         "niconico": 0 if "niconico" in selected else None}
+            active = selected
+            after, before = publication_window(period)
         results = await asyncio.gather(*(
-            self._run(platform, query, positions[platform], platform in active, platform in selected, sort)
+            self._run(platform, query, positions[platform], platform in active, platform in selected, sort, after, before)
             for platform in PLATFORMS
         ))
         # 失敗した位置は進めない。再試行で未取得の動画を飛ばさないため。
@@ -174,13 +193,15 @@ class SearchService:
         remaining = [p for p in PLATFORMS if positions[p] is not None]
         return SearchResponse(
             query=query, target=target, sort=sort, videos=videos, sources=sources,
+            period=period, published_after=after, published_before=before,
             partial=any(source.selected and source.status != "ok" for source in sources.values()),
-            next_cursor=self._cursors.encode(query, positions, remaining, target, sort),
+            next_cursor=self._cursors.encode(query, positions, remaining, target, sort, period, after, before),
             # 全体の続き位置を保存しつつ、失敗したサイトだけを再試行できる。
-            retry_cursor=self._cursors.encode(query, positions, failed, target, sort),
+            retry_cursor=self._cursors.encode(query, positions, failed, target, sort, period, after, before),
         )
 
-    async def _run(self, platform: Platform, query: str, position, requested: bool, selected: bool = True, sort: SearchSort = "default"):
+    async def _run(self, platform: Platform, query: str, position, requested: bool, selected: bool = True,
+                   sort: SearchSort = "default", after=None, before=None):
         """終了したサイトは呼ばず、失敗は現在位置を保持したまま返す。"""
         # 【根幹】対象外はキー確認やキャッシュ参照より前に終了し、外部通信しない。
         if not selected:
@@ -192,7 +213,7 @@ class SearchService:
         if not requested or position is None:
             return [], SourceStatus(status="ok", requested=False, has_more=position is not None), position
         try:
-            return await asyncio.wait_for(self._search_locked(platform, query, position, sort), REQUEST_DEADLINE)
+            return await asyncio.wait_for(self._search_locked(platform, query, position, sort, after, before), REQUEST_DEADLINE)
         except (asyncio.TimeoutError, httpx.TimeoutException):
             error = ProviderError("timeout", "検索先の応答が時間内に返りませんでした。少し待って再試行してください。")
         except httpx.RequestError:
@@ -202,16 +223,16 @@ class SearchService:
         # 外部の本文や例外文字列は返さない。秘密情報を画面へ流さないため。
         return [], SourceStatus(status="error", code=error.code, message=error.message, has_more=True), position
 
-    async def _search_locked(self, platform: Platform, query: str, position, sort: SearchSort = "default"):
+    async def _search_locked(self, platform: Platform, query: str, position, sort: SearchSort = "default", after=None, before=None):
         """同じサイトへの接続を直列化し、重複検索・混雑時の連続アクセスを防ぐ。"""
         async with self._locks[platform]:
             # 【根幹】並び順の異なるページを同じキャッシュとして返さない。
-            cache_key = (platform, query, position, sort)
+            cache_key = (platform, query, position, sort, after, before)
             now = time.monotonic()
             cached = self._cache.get(cache_key)
             if cached and now - cached[0] < CACHE_SECONDS:
                 return cached[1], SourceStatus(status="ok", count=len(cached[1]), cached=True,
-                    has_more=cached[2] is not None, end_reason=cached[3]), cached[2]
+                    has_more=cached[2] is not None, end_reason=cached[3], metadata_warning=cached[4]), cached[2]
             if now < self._cooldown[platform]:
                 raise ProviderError("cooldown", "検索先が混雑または利用制限中です。しばらく待って再試行してください。")
             if platform == "niconico":
@@ -219,19 +240,20 @@ class SearchService:
                 await asyncio.sleep(max(0, self._nico_ready_at - time.monotonic()))
             started = time.monotonic()
             try:
-                payload = await self._fetch(platform, query, position, sort)
+                payload = await self._fetch(platform, query, position, sort, after, before)
             finally:
                 if platform == "niconico":
                     elapsed = time.monotonic() - started
                     self._nico_ready_at = time.monotonic() + max(1.0, elapsed)
             videos = parse_youtube(payload) if platform == "youtube" else parse_niconico(payload)
             next_position, end_reason = self._next_position(platform, payload, position)
-            self._cache[cache_key] = (time.monotonic(), videos, next_position, end_reason)
+            metadata_warning = await self._metadata.enrich(platform, videos)
+            self._cache[cache_key] = (time.monotonic(), videos, next_position, end_reason, metadata_warning)
             self._cache.move_to_end(cache_key)
             while len(self._cache) > CACHE_ENTRIES:
                 self._cache.popitem(last=False)
             return videos, SourceStatus(status="ok", count=len(videos),
-                has_more=next_position is not None, end_reason=end_reason), next_position
+                has_more=next_position is not None, end_reason=end_reason, metadata_warning=metadata_warning), next_position
 
     def _next_position(self, platform: Platform, payload: dict, position):
         """表示後の件数ではなく、APIが返した元のページに基づき次の位置を求める。"""
@@ -254,7 +276,7 @@ class SearchService:
             return None, "offset_limit"
         return next_offset, None
 
-    async def _fetch(self, platform: Platform, query: str, position, sort: SearchSort = "default") -> dict:
+    async def _fetch(self, platform: Platform, query: str, position, sort: SearchSort = "default", after=None, before=None) -> dict:
         """外部APIへGETを1回送る。自動リトライで利用枠を消費しない。"""
         if platform == "youtube":
             # APIキーはURLのクエリに載せず、GoogleのAPIキーヘッダーで送る。
@@ -264,13 +286,15 @@ class SearchService:
                 "order": SORT_ORDERS[platform][sort], "relevanceLanguage": "ja", "regionCode": "JP",
                 "safeSearch": "moderate",
                 **({"pageToken": position} if position else {}),
+                **({"publishedAfter": after, "publishedBefore": before} if after else {}),
             }, headers={"X-Goog-Api-Key": self._youtube_key})
         else:
             response = await self.client.get(NICONICO_ENDPOINT, params={
                 "q": query, "targets": "title,description,tags",
-                "fields": "contentId,title,thumbnailUrl",
+                "fields": "contentId,title,thumbnailUrl,startTime,viewCounter,userId,channelId",
                 "_sort": SORT_ORDERS[platform][sort], "_limit": PER_SITE, "_offset": position,
                 "_context": "video-cross-search-classroom",
+                **({"filters[startTime][gte]": after, "filters[startTime][lte]": before} if after else {}),
             })
         if response.status_code == 503 and platform == "niconico":
             # ニコニコ公式の指定：503の後は5分以上待つ。

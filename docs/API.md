@@ -1,4 +1,4 @@
-# 動画一覧・検索API v0.5
+# 動画一覧・検索API v0.6
 
 ## リクエスト
 `GET http://127.0.0.1:8000/api/videos`
@@ -13,7 +13,12 @@
       "platform": "youtube",
       "title": "【仮データ】YouTube サンプル 1",
       "thumbnail_url": "/static/youtube-placeholder.svg",
-      "video_url": null
+      "video_url": null,
+      "published_at": null,
+      "view_count": null,
+      "author_name": null,
+      "author_id": null,
+      "metadata_fetched_at": null
     }
   ]
 }
@@ -130,7 +135,7 @@ busy、rate_limited、cooldown、query_rejected、upstream_error、invalid_respo
 
 同じ語の成功結果はサーバー内で60秒保持し、全サイト合計最大128検索分に制限します。
 ブラウザ等への応答はCache-Control: no-storeです。ニコニコの503後は5分待機、429後は最低60秒待機します。
-サイトごとの処理は待機を含め10秒で打ち切ります。詳細と公式資料は [SEARCH.md](SEARCH.md) を参照してください。
+サイトごとの処理は待機を含め16秒で打ち切ります。詳細と公式資料は [SEARCH.md](SEARCH.md) を参照してください。
 
 
 ## 続き取得（v0.3で追加）
@@ -191,3 +196,36 @@ youtube指定でキーがなければ502とnot_configuredを返し、ニコニ�
 YouTubeでは並び順によって取得できる結果の範囲が変わる場合があります。新しい順でも検索インデックスの反映遅延があり、ニコニコも日次スナップショットです。
 
 公式資料：[YouTube search.list](https://developers.google.com/youtube/v3/docs/search/list)、[ニコニコ検索API](https://site.nicovideo.jp/search-api-docs/snapshot)。
+
+
+## 追加情報と投稿期間（v0.6で追加）
+
+`GET /api/search?q=初音ミク&target=all&sort=newest&period=week`
+
+| period | 意味 |
+|---|---|
+| all | 既定。期間指定なし |
+| week | 最近7日 |
+| month | 最近30日（暦月ではない） |
+| year | 最近365日（暦年ではない） |
+
+不正なperiodは422。期間は初回検索のUTC時刻を分単位に丸めて計算します。
+応答にperiod、published_after、published_beforeを返し、指定なしなら日時は両方nullです。
+続き・再試行には同じq/target/sort/periodと、受け取ったcursorを送ります。
+期間と日時範囲も署名に含めます。途中でperiodを変えると410です。キャッシュは日時範囲ごとに分離します。
+動画の公開日時による絞り込みであり、「最近視聴された動画」の絞り込みではありません。
+
+固定一覧と検索結果のVideoに次を追加しました。旧JSONで省略された項目はnullになります。
+
+| 項目 | 型 | 意味 |
+|---|---|---|
+| published_at | 日時文字列 または null | タイムゾーン付き公開日時。画面は日本時間で表示 |
+| view_count | 0以上の整数 または null | 取得時点の再生数。nullを0に置き換えない |
+| author_name | 文字列 または null | 投稿者・チャンネルの表示名 |
+| author_id | 文字列 または null | 名前がない場合の識別用。ニコニコはuser:IDまたはchannel:ID |
+| metadata_fetched_at | 日時文字列 または null | この追加情報を取得した時刻 |
+
+sources.*.metadata_warningは追加情報だけの取得不備を知らせる文字列、正常ならnullです。
+この警告だけではstatusをerrorにせず、検索動画・next_cursorを返します。retry_cursorは検索自体の失敗用です。
+再生数などの不足分を取り直すには、60秒のキャッシュ期限後に同じ条件で再検索します。
+外部検索インデックスと詳細情報の更新時差により、表示した再生数の厳密な降順にならない場合があります。

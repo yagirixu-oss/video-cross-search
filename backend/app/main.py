@@ -1,5 +1,6 @@
 """固定動画一覧と、外部サイトをまとめた検索API。起動方法はREADME.mdを参照。"""
 import json
+import hashlib
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,12 +8,13 @@ from pathlib import Path
 from fastapi import FastAPI, Request, Query, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 import httpx
 from dotenv import dotenv_values
 from .models import Video, VideoList
 from .search import SearchService, SearchResponse, SearchTarget, SearchSort
 from .pagination import CursorError
+from .filters import SearchPeriod
 
 # ── 固定ファイルの読み込み ───────────────────────────────
 # 【根幹】コマンド実行場所ではなく、このファイルの位置からパスを求める。
@@ -44,13 +46,28 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
         # クライアントは起動中だけ再利用し、終了時に接続を閉じる。
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False,
-            headers={"User-Agent": "video-cross-search-classroom/0.2"},
+            headers={"User-Agent": "video-cross-search-classroom/0.6"},
             transport=search_transport,
         ) as client:
             application.state.search_service = SearchService(client, youtube_key)
             yield
 
-    application = FastAPI(title="Video Cross Search API", version="0.5.0", lifespan=lifespan)
+    application = FastAPI(title="Video Cross Search API", version="0.6.0", lifespan=lifespan)
+
+    # ── 更新後の画面と処理が食い違わないようにする ──────
+    @application.middleware("http")
+    async def refresh_frontend(request: Request, call_next):
+        """【根幹】HTML/CSS/JSを保存させず、古い条件付き要求による304も防ぐ。"""
+        is_frontend = request.url.path == "/" or request.url.path.startswith("/ui/")
+        if is_frontend:
+            request.scope["headers"] = [
+                (key, value) for key, value in request.scope["headers"]
+                if key.lower() not in (b"if-none-match", b"if-modified-since")
+            ]
+        response = await call_next(request)
+        if is_frontend:
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
     # CORSは、別ポートで動く画面からのアクセスをブラウザに許可する設定。
     # ログインは未実装なので、Cookieの送受信は許可しない。
@@ -80,13 +97,14 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
                             q: str = Query(min_length=1, max_length=100),
                             cursor: str | None = Query(default=None, min_length=1, max_length=4096),
                             target: SearchTarget = Query(default="all"),
-                            sort: SearchSort = Query(default="default")) -> SearchResponse:
+                            sort: SearchSort = Query(default="default"),
+                            period: SearchPeriod = Query(default="all")) -> SearchResponse:
         """【根幹】入力検証 → 両サイトへ依頼 → 結果の統合。失敗と0件を区別する。"""
         query = q.strip()
         if not query or any(ord(char) < 32 or ord(char) == 127 for char in query):
             raise HTTPException(status_code=422, detail="検索キーワードを1〜100文字で入力してください。")
         try:
-            result = await request.app.state.search_service.search(query, cursor, target, sort)
+            result = await request.app.state.search_service.search(query, cursor, target, sort, period)
         except CursorError as exc:
             # 再起動・期限切れ・別キーワードのカーソルでは最初から再検索してもらう。
             raise HTTPException(status_code=410, detail=str(exc)) from None
@@ -103,12 +121,17 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
 
     # ── 画面の配信 ─────────────────────────────────────
     # APIと同じサーバーで配信するので、追加の開発サーバーは不要。
-    application.mount("/ui", StaticFiles(directory=FRONTEND_DIR), name="ui")
-
     @application.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        """一覧画面のHTMLを返す。動画自体はブラウザからAPIへ別途要求する。"""
-        return FileResponse(FRONTEND_DIR / "index.html")
+    @application.get("/ui/index.html", include_in_schema=False)
+    def index() -> HTMLResponse:
+        """ファイル内容から版番号を作り、旧URLのキャッシュと区別する。"""
+        # 更新日時が同じZIPでも、内容が変わればURLが変わる。手動の版上げは不要。
+        assets = (FRONTEND_DIR / "app.js").read_bytes() + (FRONTEND_DIR / "styles.css").read_bytes()
+        version = hashlib.sha256(assets).hexdigest()[:16]
+        template = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(template.replace("__ASSET_VERSION__", version))
+
+    application.mount("/ui", StaticFiles(directory=FRONTEND_DIR), name="ui")
 
     @application.get("/favicon.ico", include_in_schema=False)
     def favicon() -> FileResponse:

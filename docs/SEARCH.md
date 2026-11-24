@@ -70,3 +70,8 @@ YouTubeのライブ中・配信予定は除外します。Twitchは今回の範�
 - [ニコニコ動画スナップショット検索API](https://site.nicovideo.jp/search-api-docs/snapshot)
 
 2026-11-10確認。APIの条件や利用枠は変更されるため、公開前には改めて公式資料を確認してください。
+
+
+## v0.6の補足
+
+2026-11-24に[YouTube videos.list](https://developers.google.com/youtube/v3/docs/videos/list)と検索APIの公開日時条件、ニコニコ検索APIのstartTimeフィルターを確認しました。追加情報取得・通信回数・キャッシュ対策は [SEARCH-DETAILS.md](SEARCH-DETAILS.md) を参照してください。
