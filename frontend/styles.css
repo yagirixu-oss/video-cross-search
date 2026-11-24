@@ -64,9 +64,10 @@ footer { border-top: 1px solid var(--line); padding: 24px 4%; color: var(--muted
 .pagination button:disabled { opacity: .55; cursor: wait; }
 
 /* ── 検索対象：キーボードでも選べる標準の選択欄 ──────── */
-#search-target, #search-sort, #search-period { display: block; max-width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; }
-#search-target:focus-visible, #search-sort:focus-visible, #search-period:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-#target-help, #sort-help, #period-help { color: var(--muted); font-size: 12px; margin: 8px 0 14px; }
+#search-target, #search-sort, #search-period, #search-format { display: block; max-width: 100%; padding: 10px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--text); font: inherit; }
+#search-target:focus-visible, #search-sort:focus-visible, #search-period:focus-visible, #search-format:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#target-help, #sort-help, #period-help, #format-help { color: var(--muted); font-size: 12px; margin: 8px 0 14px; }
+#search-format:disabled { opacity: .5; }
 
 /* 長い検索条件は狭い画面で折り返し、横にはみ出さないようにする。 */
 .list-heading > * { min-width: 0; }
@@ -75,7 +76,7 @@ footer { border-top: 1px solid var(--line); padding: 24px 4%; color: var(--muted
 /* ── 検索条件を並べ、スマートフォンでは1列にする ─────── */
 .search-filters {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 18px;
   margin-bottom: 8px;
 }
@@ -87,6 +88,21 @@ footer { border-top: 1px solid var(--line); padding: 24px 4%; color: var(--muted
 .video-details p { margin: 4px 0; }
 .video-author { color: var(--text); }
 .video-details small { font-size: 10px; }
+
+/* ── 種類の推定は文字と根拠でも伝え、色だけに頼らない ── */
+.format-details { margin: 10px 0; }
+.format-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  margin: 0 8px 4px 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 11px;
+}
+.format-shorts { color: #ffb1c7; border-color: #724455; }
+.format-regular { color: var(--accent); border-color: #43665a; }
+.format-reason { font-size: 11px; }
 @media (max-width: 760px) {
   .search-filters { grid-template-columns: 1fr; gap: 4px; }
 }

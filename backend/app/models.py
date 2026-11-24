@@ -18,12 +18,18 @@ class Video(BaseModel):
     author_name: str | None = Field(default=None, description="投稿者またはチャンネルの表示名")
     author_id: str | None = Field(default=None, description="名前を取得できない場合に使う投稿者ID")
     metadata_fetched_at: datetime | None = Field(default=None, description="追加情報を取得した日時")
+    duration_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False, description="YouTubeの再生時間（秒）。未取得はnull")
+    youtube_format: Literal["shorts", "regular", "unknown"] | None = Field(default=None, description="YouTubeの推定分類。ニコニコはnull")
+    format_reason: str | None = Field(default=None, description="推定の根拠。YouTube公式の分類ではない")
 
 
     @model_validator(mode="after")
     def validate_source_link(self):
         """投稿元・ID・リンク先を照合し、取り違えた動画データを起動時に検知する。"""
         # 未選定の仮データは引き続き使える。実動画だけを厳密に照合する。
+        if self.platform == "youtube" and self.youtube_format is None:
+            self.youtube_format = "unknown"
+            self.format_reason = "分類情報をまだ取得していません"
         if self.video_url is None:
             return self
         url = urlsplit(str(self.video_url))

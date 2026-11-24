@@ -26,13 +26,14 @@ class CursorCodec:
 
     def encode(self, query: str, positions: dict, active: list[str], target: str = "all", sort: str = "default",
                period: str = "all", published_after: str | None = None,
-               published_before: str | None = None) -> str | None:
+               published_before: str | None = None, youtube_format: str = "all") -> str | None:
         """【根幹】検索語・各サイトの位置・今回呼ぶサイトをまとめて署名する。"""
         if not active:
             return None
         payload = json.dumps({
             "q": query, "positions": positions, "active": active, "target": target, "sort": sort,
             "period": period, "after": published_after, "before": published_before,
+            "youtube_format": youtube_format,
             "expires": int(time.time()) + CURSOR_TTL,
         }, ensure_ascii=True, separators=(",", ":")).encode()
         body = base64.urlsafe_b64encode(payload).decode().rstrip("=")
@@ -40,7 +41,7 @@ class CursorCodec:
         return f"{body}.{signature}"
 
     def decode(self, cursor: str, query: str, target: str = "all", sort: str = "default",
-               period: str = "all") -> tuple[dict, list[str], str | None, str | None]:
+               period: str = "all", youtube_format: str = "all") -> tuple[dict, list[str], str | None, str | None]:
         """署名・期限・検索語・位置の型を確認し、使える続き情報だけを返す。"""
         try:
             body, signature = cursor.split(".")
@@ -51,7 +52,7 @@ class CursorCodec:
             positions, active = data["positions"], data["active"]
             if data["q"] != query or data.get("target") != target or data.get("sort") != sort or data["expires"] <= time.time():
                 raise ValueError
-            if data.get("period") != period:
+            if data.get("period") != period or data.get("youtube_format", "all") != youtube_format:
                 raise ValueError
             after, before = data["after"], data["before"]
             if period == "all":
@@ -74,4 +75,4 @@ class CursorCodec:
                 raise ValueError
             return positions, active, after, before
         except (ValueError, TypeError, KeyError, UnicodeError):
-            raise CursorError("続きの情報が無効、または期限切れです。同じキーワード・検索対象・並び順・投稿期間で検索し直してください。") from None
+            raise CursorError("続きの情報が無効、または期限切れです。同じキーワード・検索対象・並び順・投稿期間・YouTubeの種類で検索し直してください。") from None

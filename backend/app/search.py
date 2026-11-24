@@ -15,6 +15,7 @@ from .models import Video
 from .pagination import CursorCodec, PLATFORMS, NICO_MAX_OFFSET
 from .filters import SearchPeriod, publication_window
 from .metadata import MetadataService, date_or_none, count_or_none, text_or_none
+from .youtube_format import YouTubeFormat
 
 # ── 外部APIの接続先と、この授業制作での制限 ──────────────
 YOUTUBE_ENDPOINT = "https://www.googleapis.com/youtube/v3/search"
@@ -46,6 +47,8 @@ class SourceStatus(BaseModel):
     has_more: bool = False
     end_reason: str | None = None
     metadata_warning: str | None = None
+    fetched_count: int = 0  # このページで種類を絞る前の件数。全検索結果の総数ではない。
+    format_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class SearchResponse(BaseModel):
@@ -65,6 +68,7 @@ class SearchResponse(BaseModel):
     personalization_note: str | None = None
     preference_reasons: dict[str, str] = Field(default_factory=dict)
     max_per_site: int = PER_SITE
+    youtube_format: YouTubeFormat = "all"
 
 
 class ProviderError(Exception):
@@ -170,11 +174,12 @@ class SearchService:
         self._metadata = MetadataService(client, youtube_key)
 
     async def search(self, query: str, cursor: str | None = None, target: SearchTarget = "all",
-                     sort: SearchSort = "default", period: SearchPeriod = "all", page_size: int = PER_SITE) -> SearchResponse:
+                     sort: SearchSort = "default", period: SearchPeriod = "all", page_size: int = PER_SITE,
+                     youtube_format: YouTubeFormat = "all") -> SearchResponse:
         """【根幹】続き位置から検索し、成功したサイトだけ次の位置へ進める。"""
         selected = list(PLATFORMS) if target == "all" else [target]
         if cursor is not None:
-            positions, active, after, before = self._cursors.decode(cursor, query, target, sort, period)
+            positions, active, after, before = self._cursors.decode(cursor, query, target, sort, period, youtube_format)
         else:
             positions = {"youtube": "" if "youtube" in selected else None,
                          "niconico": 0 if "niconico" in selected else None}
@@ -184,6 +189,19 @@ class SearchService:
             self._run(platform, query, positions[platform], platform in active, platform in selected, sort, after, before, page_size)
             for platform in PLATFORMS
         ))
+        # ── 【根幹】共通キャッシュは元の候補を保持し、返すページだけを絞る ──
+        # 表示が0件でも次の位置は元APIに従う。埋まるまで勝手に追加検索しない。
+        for index, (items, source, next_position) in enumerate(results):
+            source.fetched_count = len(items)
+            if PLATFORMS[index] == "youtube" and source.status == "ok" and source.requested:
+                source.format_counts = {
+                    kind: sum((video.youtube_format or "unknown") == kind for video in items)
+                    for kind in ("shorts", "regular", "unknown")
+                }
+                if youtube_format != "all":
+                    items = [video for video in items if (video.youtube_format or "unknown") == youtube_format]
+                source.count = len(items)
+                results[index] = items, source, next_position
         # 失敗した位置は進めない。再試行で未取得の動画を飛ばさないため。
         sources = {}
         failed = []
@@ -197,11 +215,11 @@ class SearchService:
         remaining = [p for p in PLATFORMS if positions[p] is not None]
         return SearchResponse(
             query=query, target=target, sort=sort, videos=videos, sources=sources, max_per_site=page_size,
-            period=period, published_after=after, published_before=before,
+            period=period, published_after=after, published_before=before, youtube_format=youtube_format,
             partial=any(source.selected and source.status != "ok" for source in sources.values()),
-            next_cursor=self._cursors.encode(query, positions, remaining, target, sort, period, after, before),
+            next_cursor=self._cursors.encode(query, positions, remaining, target, sort, period, after, before, youtube_format),
             # 全体の続き位置を保存しつつ、失敗したサイトだけを再試行できる。
-            retry_cursor=self._cursors.encode(query, positions, failed, target, sort, period, after, before),
+            retry_cursor=self._cursors.encode(query, positions, failed, target, sort, period, after, before, youtube_format),
         )
 
     async def _run(self, platform: Platform, query: str, position, requested: bool, selected: bool = True,

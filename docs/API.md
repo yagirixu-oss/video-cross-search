@@ -1,4 +1,12 @@
-# 動画一覧・検索API v0.7
+# 動画一覧・検索API v0.8
+
+## v0.8：YouTubeの種類（推定）
+
+`GET /api/search` に `youtube_format=all|regular|shorts|unknown` を追加。省略時は `all`。
+YouTubeだけに適用し、ニコニコの結果はそのままです。種類を変えたカーソルは410で拒否します。
+追加フィールド・件数の意味・判定の限界は [YouTubeの種類](YOUTUBE-FORMAT.md) を参照してください。
+動画の `duration_seconds`、`youtube_format`、`format_reason` は固定一覧にも含まれます。
+以下の古いJSON例は追加項目を省略しています。
 
 ## リクエスト
 `GET http://127.0.0.1:8000/api/videos`

@@ -51,6 +51,17 @@
             </select>
             <p id="period-help">検索時点からの期間です。「もっと見る」でも同じ期間を使います。</p>
           </div>
+          <!-- 種類は推定。短い通常動画をショートと断定せず、未判定も選べる。 -->
+          <div class="filter-field">
+            <label for="search-format">YouTubeの種類</label>
+            <select id="search-format" name="youtube_format" aria-describedby="format-help">
+              <option value="all">すべて</option>
+              <option value="regular">通常動画候補</option>
+              <option value="shorts">ショート候補</option>
+              <option value="unknown">未判定</option>
+            </select>
+            <p id="format-help">再生時間とハッシュタグによる推定です。YouTube公式の分類とは異なります。ニコニコには適用しません。</p>
+          </div>
         </div>
         <label class="check-label" for="personalize-search">
           <input id="personalize-search" type="checkbox"> 履歴を検索に反映
@@ -97,6 +108,7 @@
       <div class="list-heading"><h2 id="list-title"><span id="list-label">動画一覧</span> <span id="count">—</span></h2><span class="sample-label" id="list-mode">公開動画・固定の12本</span></div>
       <p class="notice" id="list-notice">動作確認用に選んだ公開動画です。カードを選ぶと元サイトを開きます。</p>
       <p id="source-summary" class="notice" hidden></p>
+      <p id="format-summary" class="notice" hidden></p>
       <p id="personalization-note" class="notice" hidden></p>
       <div id="warnings" class="warnings" role="status" aria-live="polite" hidden></div>
       <div id="status" role="status" aria-live="polite">動画を読み込んでいます…</div>

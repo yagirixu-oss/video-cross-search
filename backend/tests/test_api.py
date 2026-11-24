@@ -19,7 +19,8 @@ def test_catalog_and_assets():
         assert len({v["id"] for v in videos}) == 12
         for video in videos:
             assert set(video) == {"id", "platform", "title", "thumbnail_url", "video_url",
-                                  "published_at", "view_count", "author_name", "author_id", "metadata_fetched_at"}
+                                  "published_at", "view_count", "author_name", "author_id", "metadata_fetched_at",
+                                  "duration_seconds", "youtube_format", "format_reason"}
             assert video["video_url"].startswith("https://www.")
             assert video["thumbnail_url"].startswith("https://")
             Video.model_validate(video)

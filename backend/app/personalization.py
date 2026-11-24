@@ -89,9 +89,9 @@ class PersonalSearch:
             self.pages.popitem(last=False)
         return key
 
-    async def run(self, owner, query, cursor, target, sort, period):
+    async def run(self, owner, query, cursor, target, sort, period, youtube_format="all"):
         """履歴ONの検索を実行。日時順・再生数順を指定した場合は補正しない。"""
-        condition = (query, target, sort, period)
+        condition = (query, target, sort, period, youtube_format)
         if cursor:
             context = self.pages.get(cursor)
             if not context or context["owner"] != owner or context["condition"] != condition or context["expires"] <= time.monotonic():
@@ -101,8 +101,9 @@ class PersonalSearch:
                        "generation": self.generations.get(owner, 0),
                        "preference": preferences(self.history.read(owner), query)}
         enabled = sort == "default" and context["preference"]["count"] > 0
-        # 取得した18件をすべて表示するので、好みに合わなかった候補も失われない。
-        result = await self.search.search(query, context["cursor"], target, sort, period, page_size=18 if enabled else 6)
+        # 種類で絞った候補の中で補正する。好みの点数だけを理由に動画を捨てない。
+        result = await self.search.search(query, context["cursor"], target, sort, period,
+                                          page_size=18 if enabled else 6, youtube_format=youtube_format)
         # 外部APIを待つ間に削除された場合も、古い好みを続き情報へ戻さない。
         if context["generation"] != self.generations.get(owner, 0):
             raise CursorError("検索中に履歴が削除されました。検索し直してください。")

@@ -6,6 +6,7 @@ from xml.etree import ElementTree
 import httpx
 
 from .models import Video
+from .youtube_format import duration_seconds, classify_youtube
 
 YOUTUBE_VIDEOS_ENDPOINT = "https://www.googleapis.com/youtube/v3/videos"
 NICO_THUMB_ENDPOINT = "https://ext.nicovideo.jp/api/getthumbinfo/"
@@ -67,11 +68,11 @@ class MetadataService:
         return METADATA_WARNING if missing else None
 
     async def _youtube(self, videos: list[Video]) -> None:
-        """検索APIにない再生数をvideos.listでまとめて取得し、IDで突き合わせる。"""
+        """再生数・時間・省略されていない説明欄を一括取得し、IDで突き合わせる。"""
         ids = [video.id.split(":", 1)[1] for video in videos]
         response = await self.client.get(
             YOUTUBE_VIDEOS_ENDPOINT,
-            params={"part": "snippet,statistics", "id": ",".join(ids)},
+            params={"part": "snippet,statistics,contentDetails", "id": ",".join(ids)},
             headers={"X-Goog-Api-Key": self._youtube_key},
             timeout=3.0,
         )
@@ -93,6 +94,13 @@ class MetadataService:
                 video.published_at = date_or_none(snippet.get("publishedAt")) or video.published_at
             if isinstance(stats, dict):
                 video.view_count = count_or_none(stats.get("viewCount"))
+            details = item.get("contentDetails")
+            video.duration_seconds = duration_seconds(details.get("duration")) if isinstance(details, dict) else None
+            full_title = text_or_none(snippet.get("title")) if isinstance(snippet, dict) else None
+            description = snippet.get("description", "") if isinstance(snippet, dict) else ""
+            video.youtube_format, video.format_reason = classify_youtube(
+                video.duration_seconds, full_title or video.title, description
+            )
             video.metadata_fetched_at = datetime.now(timezone.utc)
 
     async def _niconico_name(self, video: Video) -> None:

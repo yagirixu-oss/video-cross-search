@@ -87,6 +87,7 @@ function createDetails(video) {
     ? video.view_count.toLocaleString("ja-JP") + "回再生" : "再生数：未取得";
   stats.textContent = date + " 公開 · " + views;
   details.append(author, stats);
+  if (video.platform === "youtube") details.append(createFormatDetails(video));
   // 固定一覧の数値がリアルタイムの値ではないことも、取得日時で判断できる。
   const fetched = video.metadata_fetched_at ? new Date(video.metadata_fetched_at) : null;
   if (fetched && !Number.isNaN(fetched.getTime())) {
@@ -99,8 +100,37 @@ function createDetails(video) {
   return details;
 }
 
+// ── YouTubeの種類と根拠：公式分類と見間違えない表示 ────
+function createFormatDetails(video) {
+  const block = document.createElement("div");
+  block.className = "format-details";
+  const kind = ["shorts", "regular"].includes(video.youtube_format) ? video.youtube_format : "unknown";
+  const badge = document.createElement("span");
+  badge.className = "format-badge format-" + kind;
+  badge.textContent = formatLabels[kind];
+  const duration = document.createElement("span");
+  const seconds = video.duration_seconds;
+  if (Number.isFinite(seconds) && seconds > 0) {
+    const total = Math.floor(seconds);
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor(total / 60) % 60;
+    duration.textContent = (hours ? hours + ":" + String(minutes).padStart(2, "0") : minutes) +
+      ":" + String(total % 60).padStart(2, "0");
+    duration.setAttribute("aria-label", "再生時間 " + duration.textContent);
+  } else duration.textContent = "時間未取得";
+  const reason = document.createElement("p");
+  reason.className = "format-reason";
+  reason.textContent = "推定：" + (video.format_reason || "分類情報をまだ取得していません");
+  block.append(badge, duration, reason);
+  return block;
+}
+
 // ── 検索・固定一覧で共有する状態 ────────────────────────
 const searchForm = document.querySelector("#search-form");
+const formatInput = document.querySelector("#search-format");
+const formatSummary = document.querySelector("#format-summary");
+const formatLabels = { all: "すべて", regular: "通常動画候補", shorts: "ショート候補", unknown: "未判定" };
+let currentFormat = "all";
 const periodInput = document.querySelector("#search-period");
 const periodLabels = { all: "期間指定なし", week: "最近7日", month: "最近30日", year: "最近365日" };
 let currentPeriod = "all"; // 選択欄の編集と、実行済みの検索条件を分ける。
@@ -158,6 +188,17 @@ function showSources() {
   sourceSummary.textContent = summaries.join(" / ");
   sourceSummary.hidden = !summaries.length;
   warnings.hidden = !warnings.childElementCount;
+  // 累計の表示件数と、直近に取得したページの分類内訳は分けて説明する。
+  const youtube = sourceStates.youtube;
+  const kinds = youtube?.format_counts;
+  formatSummary.hidden = currentQuery === null || !youtube?.selected || !kinds || !Object.keys(kinds).length;
+  if (!formatSummary.hidden) {
+    formatSummary.textContent = "直近に取得したYouTube " + youtube.fetched_count + "本の内訳：通常動画候補 " +
+      kinds.regular + "本 / ショート候補 " + kinds.shorts + "本 / 未判定 " + kinds.unknown +
+      "本。再生時間とハッシュタグによる推定です。" +
+      (currentFormat !== "all" ? " 選んだ種類だけを表示しています。" +
+        (nextCursor ? "該当が0本でも「もっと見る」で続きを確認できます。" : "") : "");
+  }
 }
 
 // すでにDOMから取り除いたボタンへフォーカスが残らないよう、結果の案内へ移す。
@@ -167,7 +208,7 @@ function restorePagingFocus(wasPaging) {
 
 // ── 【根幹】初回は置き換え、続きは既存カードの下へ追加 ──
 // cursorはバックエンドから受け取った文字列をそのまま返す。画面側では分解しない。
-async function loadVideos(query = null, cursor = null, append = false, target = "all", sort = "default", period = "all", personalized = false) {
+async function loadVideos(query = null, cursor = null, append = false, target = "all", sort = "default", period = "all", personalized = false, youtubeFormat = "all") {
   // 追加ボタン連打による二重通信を防ぐ。新しい検索は実行中でも切り替えられる。
   if (append && activeController) return;
   const wasPaging = document.activeElement === more || document.activeElement === retry;
@@ -176,6 +217,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   currentSort = sort;
   currentPeriod = period;
   currentPersonalized = personalized;
+  currentFormat = youtubeFormat;
   const thisRequest = ++requestNumber;
   if (activeController) activeController.abort();
   const controller = new AbortController();
@@ -195,13 +237,15 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
     warnings.replaceChildren();
     warnings.hidden = true;
     sourceSummary.hidden = true;
+    formatSummary.hidden = true;
     personalizationNote.hidden = true;
     more.hidden = true;
     retry.hidden = true;
     pageStatus.textContent = "";
     count.textContent = "—";
     listLabel.textContent = query === null ? "動画一覧" : "「" + query + "」の検索結果";
-    listMode.textContent = query === null ? "公開動画・固定の12本" : targetLabels[target] + " / " + sortLabels[sort] + " / " + periodLabels[period] + " / 1回につき各サイト最大6本";
+    listMode.textContent = query === null ? "公開動画・固定の12本" : targetLabels[target] + " / " + sortLabels[sort] + " / " + periodLabels[period] +
+      (target !== "niconico" ? " / YouTube：" + formatLabels[youtubeFormat] : "");
     listNotice.textContent = query === null
       ? "動作確認用に選んだ公開動画です。カードを選ぶと元サイトを開きます。"
       : "続きは下の「もっと見る」で取得できます。カードを選ぶと元サイトを開きます。";
@@ -211,7 +255,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   }
   const timeout = setTimeout(() => controller.abort(), 20000);
   try {
-    const params = new URLSearchParams({ q: query, target, sort, period, personalized });
+    const params = new URLSearchParams({ q: query, target, sort, period, personalized, youtube_format: youtubeFormat });
     if (cursor) params.set("cursor", cursor);
     const url = query === null ? "/api/videos" : "/api/search?" + params;
     const response = await fetch(url, {
@@ -223,7 +267,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
       // 期限切れやサーバー再起動でも、ユーザーが再検索するまでカードは残す。
       nextCursor = null;
       more.hidden = true;
-      retryRequest = { query, cursor: null, append: false, target, sort, period, personalized };
+      retryRequest = { query, cursor: null, append: false, target, sort, period, personalized, youtubeFormat };
       retry.textContent = "同じキーワードで検索し直す";
       retry.hidden = false;
       pageStatus.textContent = "続きの情報が期限切れ、または無効です。検索し直してください。";
@@ -257,12 +301,13 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
     }
     nextCursor = data.next_cursor || null;
     retryCursor = data.retry_cursor || null;
-    retryRequest = retryCursor ? { query, cursor: retryCursor, append: true, target, sort, period, personalized } : null;
+    retryRequest = retryCursor ? { query, cursor: retryCursor, append: true, target, sort, period, personalized, youtubeFormat } : null;
     personalizationNote.textContent = data.personalization_note || "";
     personalizationNote.hidden = !data.personalization_note;
     if (query !== null) {
       listMode.textContent = targetLabels[target] + " / " + sortLabels[sort] + " / " + periodLabels[period] +
-        " / 各サイト最大" + (data.max_per_site || 6) + "本" + (data.personalized ? " / 履歴反映" : "");
+        " / 各サイト最大" + (data.max_per_site || 6) + "本を取得" +
+        (target !== "niconico" ? " / YouTube：" + formatLabels[youtubeFormat] : "") + (data.personalized ? " / 履歴反映" : "");
     }
     retry.textContent = "取得できなかったサイトを再試行";
     retry.hidden = !retryRequest;
@@ -284,7 +329,7 @@ async function loadVideos(query = null, cursor = null, append = false, target = 
   } catch (error) {
     if (thisRequest !== requestNumber) return;
     // ネットワーク切断では位置を進めず、失敗したリクエストをそのまま再試行する。
-    retryRequest = { query, cursor, append, target, sort, period, personalized };
+    retryRequest = { query, cursor, append, target, sort, period, personalized, youtubeFormat };
     retry.textContent = append ? "追加の読み込みを再試行" : "もう一度読み込む";
     retry.hidden = false;
     more.hidden = true;
@@ -321,23 +366,29 @@ searchForm.addEventListener("submit", (event) => {
     return;
   }
   inputError.hidden = true;
-  loadVideos(query, null, false, targetInput.value, sortInput.value, periodInput.value, HistoryUI.enabled());
+  loadVideos(query, null, false, targetInput.value, sortInput.value, periodInput.value, HistoryUI.enabled(),
+    targetInput.value === "niconico" ? "all" : formatInput.value);
 });
 document.querySelector("#reset").addEventListener("click", () => {
   queryInput.value = "";
   targetInput.value = "all";
   sortInput.value = "default";
   periodInput.value = "all";
+  formatInput.value = "all";
+  formatInput.disabled = false;
   inputError.hidden = true;
   loadVideos(null);
 });
 // 入力欄が編集中でも、再試行するのは最後に実行した検索。
 retry.addEventListener("click", () => {
-  if (retryRequest) loadVideos(retryRequest.query, retryRequest.cursor, retryRequest.append, retryRequest.target, retryRequest.sort, retryRequest.period, retryRequest.personalized);
+  if (retryRequest) loadVideos(retryRequest.query, retryRequest.cursor, retryRequest.append, retryRequest.target,
+    retryRequest.sort, retryRequest.period, retryRequest.personalized, retryRequest.youtubeFormat);
 });
 // 続きの検索を開始するのは、このボタンを押したときだけ。
 more.addEventListener("click", () => {
-  if (nextCursor) loadVideos(currentQuery, nextCursor, true, currentTarget, currentSort, currentPeriod, currentPersonalized);
+  if (nextCursor) loadVideos(currentQuery, nextCursor, true, currentTarget, currentSort, currentPeriod, currentPersonalized, currentFormat);
 });
+// ニコニコだけを探す場合はYouTube用の条件を無効にする。実行済み条件は変えない。
+targetInput.addEventListener("change", () => { formatInput.disabled = targetInput.value === "niconico"; });
 HistoryUI.initialize();
 loadVideos();
