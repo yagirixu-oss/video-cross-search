@@ -6,6 +6,8 @@ const HistoryUI = (() => {
   const message = document.querySelector("#history-message");
   const list = document.querySelector("#history-list");
   const recordInput = document.querySelector("#record-history");
+  const openInput = document.querySelector("#record-open-history");
+  const openMessage = document.querySelector("#open-history-message");
   const personalizeInput = document.querySelector("#personalize-search");
   const dialog = document.querySelector("#player-dialog");
   const playerMessage = document.querySelector("#player-message");
@@ -14,6 +16,7 @@ const HistoryUI = (() => {
   let apiPromise = null;
   let playbackNumber = 0;
   let historyNumber = 0;
+  const opening = new Set(); // 保存中の同じカードの連打は、画面側でも重複送信しない。
 
   // 設定保存に失敗しても、通常の検索は使えるよう例外を閉じ込める。
   function saved(key) {
@@ -71,7 +74,10 @@ const HistoryUI = (() => {
         const title = document.createElement("span");
         title.textContent = event.title;
         const detail = document.createElement("small");
-        const sources = { takeout: "YouTubeから取込", player: "アプリ内で10秒以上再生", manual: "本人が視聴済みと記録" };
+        const sources = {
+          takeout: "YouTubeから取込", player: "アプリ内で10秒以上再生",
+          manual: "本人が視聴済みと記録", click: "元サイトを開いた（再生は未確認）"
+        };
         detail.textContent = new Date(event.watched_at).toLocaleString("ja-JP") + " · " + sources[event.source];
         row.append(title, detail);
         list.append(row);
@@ -106,14 +112,60 @@ const HistoryUI = (() => {
     try {
       await request("/api/history", { method: "DELETE" });
       recordInput.checked = false;
+      openInput.checked = false;
       personalizeInput.checked = false;
       save("vcs-history-record", "false");
+      save("vcs-history-open", "false");
       save("vcs-history-personalize", "false");
+      openMessage.hidden = true;
       message.textContent = "このアプリの履歴を削除しました。YouTube本体の履歴は変更していません。表示中の検索結果は、再検索すると更新されます。";
       document.querySelector("#history-delete-confirm").checked = false;
       await refresh();
     } catch (error) { message.textContent = error.message; }
     finally { button.disabled = !document.querySelector("#history-delete-confirm").checked; }
+  }
+
+  // ── カードクリック：リンクの標準動作を保ちながら記録 ──
+  function showOpenMessage(text) {
+    // 履歴パネルが閉じていても、保存の成功・失敗を一覧の近くで確認できる。
+    openMessage.textContent = text;
+    openMessage.hidden = false;
+  }
+
+  async function recordOpen(video) {
+    // 【根幹】クリックの記録と、10秒再生した記録は区別する。秒数を捏造しない。
+    if (!openInput.checked || opening.has(video.id)) return;
+    opening.add(video.id);
+    try {
+      const data = await request("/api/history/open", {
+        method: "POST", keepalive: true,
+        body: JSON.stringify({
+          video_id: video.id, title: video.title.slice(0, 500),
+          author_id: (video.author_id || "").slice(0, 200),
+          author_name: (video.author_name || "").slice(0, 200)
+        })
+      });
+      showOpenMessage(data.added
+        ? "元サイトを開いた履歴を保存しました。再生は未確認です。履歴反映がオンなら、次の検索で利用します。"
+        : "同じ動画を60秒以内に開いた履歴は、1件にまとめています。");
+      await refresh();
+    } catch (error) {
+      // 保存が失敗してもリンク遷移を妨げない。成功したようには表示しない。
+      showOpenMessage("元サイトを開いた履歴を保存できませんでした。" + error.message);
+    } finally {
+      opening.delete(video.id);
+    }
+  }
+
+  function attachCardLink(link, video) {
+    // 左クリック・Enterはclick、中クリックはauxclick。右クリックだけでは記録しない。
+    // preventDefaultを呼ばないため、別タブ・Ctrlクリックなどの標準操作を維持できる。
+    link.addEventListener("click", event => {
+      if (!event.defaultPrevented && event.button === 0) void recordOpen(video);
+    });
+    link.addEventListener("auxclick", event => {
+      if (!event.defaultPrevented && event.button === 1) void recordOpen(video);
+    });
   }
 
   // ── YouTubeの公式プレイヤーを必要なときだけ読み込む ───
@@ -251,14 +303,17 @@ const HistoryUI = (() => {
   // ── 設定と画面の初期化 ────────────────────────────────
   function initialize() {
     recordInput.checked = saved("vcs-history-record") === "true";
+    // 新しいクリック記録は初期値オン。オフにした選択は再読込後も維持する。
+    openInput.checked = saved("vcs-history-open") !== "false";
     personalizeInput.checked = saved("vcs-history-personalize") === "true";
-    for (const [input, key] of [[recordInput, "vcs-history-record"], [personalizeInput, "vcs-history-personalize"]]) {
+    for (const [input, key] of [[recordInput, "vcs-history-record"], [openInput, "vcs-history-open"],
+                              [personalizeInput, "vcs-history-personalize"]]) {
       input.addEventListener("change", () => {
         try {
           if (input.checked) headers(true);
           save(key, String(input.checked));
           // オフの間の経過時間を、再びオンにした直後に加算しない。
-          if (activePlayback) { activePlayback.playing = false; activePlayback.seconds = 0; }
+          if (activePlayback && input !== openInput) { activePlayback.playing = false; activePlayback.seconds = 0; }
         } catch {
           input.checked = false;
           message.textContent = "ブラウザの保存が使えません。サイトの保存設定を確認してください。";
@@ -276,5 +331,5 @@ const HistoryUI = (() => {
     refresh();
   }
 
-  return { initialize, actions, headers, enabled: () => personalizeInput.checked };
+  return { initialize, actions, attachCardLink, headers, enabled: () => personalizeInput.checked };
 })();

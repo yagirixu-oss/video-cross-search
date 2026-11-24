@@ -83,10 +83,14 @@
     <details id="history-panel" class="history-panel">
       <summary>視聴履歴を管理 <span id="history-total">0件</span></summary>
       <p>履歴はこのアプリを動かしているサーバーに保存され、このブラウザ専用のキーで区別します。別の端末との同期はありません。</p>
+      <label class="check-label" for="record-open-history">
+        <input id="record-open-history" type="checkbox" checked> カードから元サイトを開いた履歴を記録する
+      </label>
+      <p class="history-help">初期値はオンです。YouTube・ニコニコのカードを押すと「元サイトを開いた」と記録し、次の検索で利用できます。実際に再生したかは確認できません。</p>
       <label class="check-label" for="record-history">
         <input id="record-history" type="checkbox"> アプリ内のYouTube再生を履歴に記録する
       </label>
-      <p class="history-help">画面を表示して10秒以上再生すると記録します。ニコニコは視聴後に「見たと記録」を押してください。元サイトを開くだけでは記録しません。</p>
+      <p class="history-help">画面を表示して10秒以上再生すると、クリック履歴とは別に再生の記録を保存します。ニコニコは視聴後に「見たと記録」を押してください。</p>
       <div class="history-import">
         <label for="history-file">Google Takeoutの視聴履歴JSON（10MB以内）</label>
         <input id="history-file" type="file" accept=".json,application/json">
@@ -95,7 +99,7 @@
       <p class="history-help"><a href="https://takeout.google.com/" target="_blank" rel="noopener noreferrer">Google Takeoutを開く ↗</a> → YouTubeとYouTube Music → 履歴を選び、形式をJSONにして書き出します。ZIPを展開し、watch-history.json（視聴履歴）を選びます。</p>
       <p class="history-help">最新5000件まで保存し、補正には最新1000件まで使用します。アプリ内で記録した履歴は30日で期限切れになります。取込履歴は自動同期されません。</p>
       <p id="history-message" role="status" aria-live="polite"></p>
-      <button id="history-refresh" type="button">履歴を更新</button>
+      <button id="history-refresh" type="button">履歴一覧を再読み込み</button>
       <ol id="history-list" class="history-list" aria-label="最近の視聴履歴"></ol>
       <div class="history-delete">
         <label class="check-label" for="history-delete-confirm"><input id="history-delete-confirm" type="checkbox"> このアプリに保存した自分の履歴をすべて削除する</label>
@@ -110,6 +114,7 @@
       <p id="source-summary" class="notice" hidden></p>
       <p id="format-summary" class="notice" hidden></p>
       <p id="personalization-note" class="notice" hidden></p>
+      <p id="open-history-message" class="notice" role="status" aria-live="polite" hidden></p>
       <div id="warnings" class="warnings" role="status" aria-live="polite" hidden></div>
       <div id="status" role="status" aria-live="polite">動画を読み込んでいます…</div>
       <div id="videos" class="video-grid" aria-busy="true"></div>

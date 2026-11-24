@@ -28,6 +28,15 @@ class PlaybackWatch(BaseModel):
     seconds: float = Field(ge=10, le=86400, allow_inf_nan=False)
 
 
+class CardOpen(BaseModel):
+    """カードを開く操作の入力。再生済みとの偽装を避け、種別や秒数は受け取らない。"""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    video_id: str = Field(pattern=r"^(?:youtube:[A-Za-z0-9_-]{11}|niconico:(?:sm|so|nm)?[0-9]+)$", max_length=80)
+    title: str = Field(min_length=1, max_length=500)
+    author_id: str = Field(default="", max_length=200)
+    author_name: str = Field(default="", max_length=200)
+
+
 def history_router() -> APIRouter:
     """アプリごとに履歴ルートと短期の再生許可を作る。"""
     router = APIRouter()
@@ -71,6 +80,15 @@ def history_router() -> APIRouter:
         event = {**payload.model_dump(), "platform": "niconico", "source": "manual",
                  "watched_at": datetime.now(timezone.utc).replace(second=0, microsecond=0).isoformat()}
         return request.app.state.history.add(owner, [event])
+
+    # ── カード操作：元サイトで再生されたかは確認しない ───
+    @router.post("/api/history/open")
+    def record_card_open(payload: CardOpen, request: Request):
+        """【根幹】開いた記録として保存し、60秒以内の連打は同じ1件にまとめる。"""
+        owner = owner_from(request)
+        event = {**payload.model_dump(), "platform": payload.video_id.split(":", 1)[0]}
+        # 外部APIへの追加通信はしない。カードに表示済みの情報だけを利用する。
+        return request.app.state.history.add_open(owner, event)
 
     @router.get("/api/playback/youtube/{video_id}")
     async def playback_details(video_id: str, request: Request):

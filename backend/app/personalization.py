@@ -56,7 +56,7 @@ def rerank(videos, preference: dict):
             score = 1 / (index + 4) + 0.20 * author + 0.12 * topic
             scored.append((score, index, video))
             if author:
-                reasons[video.id] = "アプリの履歴補正：見たことのある投稿者"
+                reasons[video.id] = "アプリの履歴補正：履歴にある投稿者"
             elif topic >= 0.15:
                 reasons[video.id] = "アプリの履歴補正：履歴の話題に近い"
         groups.append([entry[2] for entry in sorted(scored, key=lambda entry: (-entry[0], entry[1]))])

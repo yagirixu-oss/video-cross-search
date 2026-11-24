@@ -1,6 +1,7 @@
 """実際の個人履歴を使わず、取込・本人分離・順位補正・再生記録の境界を検証する。"""
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 
@@ -244,3 +245,91 @@ def test_manual_record_is_explicit_and_nico_only(history_client):
         json={"video_id": "niconico:sm123", "title": "見た動画"})
     assert result.status_code == 200
     assert client.get("/api/history", headers=ALICE).json()["events"][0]["source"] == "manual"
+
+
+# ── カード操作：開いた記録と再生済みの記録を区別する ────
+@pytest.mark.parametrize("video_id", ["youtube:sample00008", "niconico:sm123"])
+def test_card_open_records_without_external_calls_and_keeps_owners_separate(history_client, video_id):
+    """両サイトのクリックを即時保存し、別人への混入や再生時間の捏造を防ぐ。"""
+    client, calls = history_client
+    payload = {"video_id": video_id, "title": "開いた動画", "author_id": "author"}
+    assert client.post("/api/history/open", json=payload).status_code == 401
+    assert client.post("/api/history/open", headers=ALICE, json=payload).json()["added"] == 1
+    assert client.post("/api/history/open", headers=ALICE, json=payload).json()["duplicates"] == 1
+    assert not calls
+    assert client.get("/api/history", headers=BOB).json()["total"] == 0
+    data = client.get("/api/history", headers=ALICE).json()
+    assert data["total"] == 1
+    event = data["events"][0]
+    assert event["source"] == "click" and event["seconds"] is None
+    assert event["platform"] == video_id.split(":")[0]
+    assert client.post("/api/history/open", headers=BOB, json=payload).json()["added"] == 1
+
+
+@pytest.mark.parametrize("change", [
+    {"video_id": "youtube:wrong"}, {"video_id": "https://evil.example/"},
+    {"video_id": "twitch:123"}, {"title": "   "}, {"title": "a" * 501},
+    {"source": "player"}, {"seconds": 10}, {"platform": "niconico"},
+])
+def test_card_open_rejects_invalid_or_forged_fields(history_client, change):
+    """カード以外のURLや、クリックを視聴済みへ偽装する追加項目を拒否する。"""
+    client, calls = history_client
+    payload = {"video_id": "youtube:sample00008", "title": "動画", **change}
+    assert client.post("/api/history/open", headers=ALICE, json=payload).status_code == 422
+    assert client.get("/api/history", headers=ALICE).json()["total"] == 0
+    assert not calls
+
+
+def test_card_open_is_used_on_next_search_but_keeps_existing_page_preferences(history_client):
+    """クリック後の再検索は補正するが、検索途中の追加取得では元の好みを維持する。"""
+    client, _ = history_client
+    params = {"q": "太鼓の達人", "target": "youtube", "personalized": True}
+    before = client.get("/api/search", headers=ALICE, params=params).json()
+    assert not before["personalized"]
+    payload = {"video_id": "youtube:sample00100", "title": "太鼓の達人 AC 全良",
+               "author_id": "UC" + "a" * 22}
+    client.post("/api/history/open", headers=ALICE, json=payload)
+    continued = client.get("/api/search", headers=ALICE,
+                           params={**params, "cursor": before["next_cursor"]}).json()
+    assert not continued["personalized"] and continued["max_per_site"] == 6
+    after = client.get("/api/search", headers=ALICE, params=params).json()
+    assert after["personalized"] and after["max_per_site"] == 18
+    assert after["videos"][0]["id"] == "youtube:sample00008"
+    assert "履歴にある投稿者" in after["preference_reasons"]["youtube:sample00008"]
+
+
+def test_card_open_does_not_replace_confirmed_manual_or_playback_events(history_client, monkeypatch):
+    """開いた記録の後で見た記録を追加しても、双方の種類と意味を保持する。"""
+    client, _ = history_client
+    nico = {"video_id": "niconico:sm123", "title": "ニコニコの動画"}
+    client.post("/api/history/open", headers=ALICE, json=nico)
+    client.post("/api/history/manual", headers=ALICE, json=nico)
+    clock = [100.0]
+    monkeypatch.setattr(history_api, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    client.post("/api/history/open", headers=ALICE,
+                json={"video_id": "youtube:sample00008", "title": "動画"})
+    details = client.get("/api/playback/youtube/sample00008", headers=ALICE).json()
+    clock[0] += 12
+    client.post("/api/history/playback", headers=ALICE, json={"permit": details["permit"], "seconds": 10})
+    events = client.get("/api/history", headers=ALICE).json()["events"]
+    assert len(events) == 4
+    assert sorted(e["source"] for e in events) == ["click", "click", "manual", "player"]
+
+
+def test_card_open_deduplication_survives_concurrent_requests_and_store_recreation(tmp_path):
+    """同時クリック・再起動でも重複せず、60秒後の別操作は保存して30日で期限切れにする。"""
+    path = tmp_path / "clicks.sqlite3"
+    event = {"video_id": "youtube:sample00008", "platform": "youtube", "title": "動画"}
+    store = HistoryStore(path)
+    store.read("alice")
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(lambda _: HistoryStore(path).add_open("alice", event), range(8)))
+    assert sum(row["added"] for row in results) == 1
+    assert HistoryStore(path).add_open("alice", event)["duplicates"] == 1
+    with store.connect() as connection:
+        connection.execute("UPDATE history SET stored_at=?", ((datetime.now(timezone.utc) - timedelta(seconds=61)).isoformat(),))
+    assert store.add_open("alice", event)["added"] == 1
+    assert len(store.read("alice")) == 2
+    with store.connect() as connection:
+        connection.execute("UPDATE history SET stored_at=?", ((datetime.now(timezone.utc) - timedelta(days=31)).isoformat(),))
+    assert not store.read("alice")

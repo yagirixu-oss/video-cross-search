@@ -1,4 +1,17 @@
-# 動画一覧・検索API v0.8
+# 動画一覧・検索API v0.9
+
+## v0.9：カードクリックの記録
+
+`POST /api/history/open` に `X-History-Token` を付け、次のJSONを送ります。
+
+```json
+{"video_id":"youtube:aqz-KE-bpKQ","title":"Big Buck Bunny","author_id":"","author_name":"Blender"}
+```
+
+- `video_id` は `youtube:` + 11文字の動画ID、または既存形式の `niconico:` + 動画ID。`title` は空白のみ不可・500文字以内、投稿者の2項目は省略可・200文字以内です。
+- 応答は `{"added":1,"duplicates":0,"limit":5000}`。同一利用者・同一動画の60秒以内の再送では `added:0, duplicates:1` です。
+- 保存種別は `click`、再生秒数はnull。種別・日時・秒数を入力で指定できません。認証ヘッダー不備は401、入力不備は422です。
+- 詳細な保存・削除・検索への反映条件は[履歴仕様](HISTORY.md)を参照してください。
 
 ## v0.8：YouTubeの種類（推定）
 

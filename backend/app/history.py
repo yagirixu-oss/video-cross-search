@@ -133,20 +133,40 @@ class HistoryStore:
 
     def add(self, owner: str, events: list[dict]) -> dict:
         """【根幹】同じファイルを再取込しても、動画ID＋視聴日時が同じ履歴は増やさない。"""
-        now = datetime.now(timezone.utc).isoformat()
         with self.connect() as connection:
-            before = connection.total_changes
-            connection.executemany("""INSERT OR IGNORE INTO history
-                (owner, video_id, platform, title, author_id, author_name, watched_at, source, seconds, stored_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
-                (owner, e["video_id"], e["platform"], e["title"][:500], e.get("author_id") or "",
-                 e.get("author_name") or "", e["watched_at"], e["source"], e.get("seconds"), now)
-                for e in events
-            ])
-            inserted = connection.total_changes - before
-            connection.execute("""DELETE FROM history WHERE owner=? AND rowid NOT IN
-                (SELECT rowid FROM history WHERE owner=? ORDER BY watched_at DESC LIMIT ?)""",
-                (owner, owner, MAX_EVENTS))
+            return self._insert(connection, owner, events)
+
+    # ── カードクリックの重複抑制 ──────────────────────
+    def add_open(self, owner: str, event: dict) -> dict:
+        """複数タブから同時に押しても、同じ利用者・動画の直近60秒は1件にする。"""
+        with self.connect() as connection:
+            # 【根幹】確認と保存の間に別の処理が割り込まないよう、書込を予約する。
+            connection.execute("BEGIN IMMEDIATE")
+            now = datetime.now(timezone.utc)
+            cutoff = (now - timedelta(seconds=60)).isoformat()
+            recent = connection.execute("""SELECT 1 FROM history
+                WHERE owner=? AND video_id=? AND source='click' AND stored_at>=? LIMIT 1""",
+                (owner, event["video_id"], cutoff)).fetchone()
+            if recent:
+                return {"added": 0, "duplicates": 1, "limit": MAX_EVENTS}
+            record = {**event, "source": "click", "seconds": None, "watched_at": now.isoformat()}
+            return self._insert(connection, owner, [record])
+
+    def _insert(self, connection, owner: str, events: list[dict]) -> dict:
+        """共通の保存処理。呼出元のトランザクション内で追加し、最新5000件を残す。"""
+        now = datetime.now(timezone.utc).isoformat()
+        before = connection.total_changes
+        connection.executemany("""INSERT OR IGNORE INTO history
+            (owner, video_id, platform, title, author_id, author_name, watched_at, source, seconds, stored_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
+            (owner, e["video_id"], e["platform"], e["title"][:500], e.get("author_id") or "",
+             e.get("author_name") or "", e["watched_at"], e["source"], e.get("seconds"), now)
+            for e in events
+        ])
+        inserted = connection.total_changes - before
+        connection.execute("""DELETE FROM history WHERE owner=? AND rowid NOT IN
+            (SELECT rowid FROM history WHERE owner=? ORDER BY watched_at DESC LIMIT ?)""",
+            (owner, owner, MAX_EVENTS))
         return {"added": inserted, "duplicates": len(events) - inserted, "limit": MAX_EVENTS}
 
     def read(self, owner: str, limit: int = MAX_EVENTS) -> list[dict]:

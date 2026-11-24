@@ -51,7 +51,7 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
         # クライアントは起動中だけ再利用し、終了時に接続を閉じる。
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(8.0, connect=3.0), follow_redirects=False,
-            headers={"User-Agent": "video-cross-search-classroom/0.8"},
+            headers={"User-Agent": "video-cross-search-classroom/0.9"},
             transport=search_transport,
         ) as client:
             application.state.search_service = SearchService(client, youtube_key)
@@ -60,7 +60,7 @@ def create_app(data_path: Path | None = None, *, search_transport: httpx.AsyncBa
             application.state.personal_search = PersonalSearch(application.state.search_service, application.state.history)
             yield
 
-    application = FastAPI(title="Video Cross Search API", version="0.8.0", lifespan=lifespan)
+    application = FastAPI(title="Video Cross Search API", version="0.9.0", lifespan=lifespan)
     application.include_router(history_router())
 
     # ── 更新後の画面と処理が食い違わないようにする ──────

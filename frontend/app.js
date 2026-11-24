@@ -31,6 +31,7 @@ function createCard(video) {
     content.href = videoUrl;
     content.target = "_blank";
     content.rel = "noopener noreferrer";
+    HistoryUI.attachCardLink(content, video);
   }
 
   const thumbnail = document.createElement("div");
